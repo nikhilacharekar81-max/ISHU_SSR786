@@ -17,7 +17,7 @@ const ordersIdx = server.indexOf("post('/api/orders', requireAuth");
 const ordersRoute = server.slice(ordersIdx >= 0 ? ordersIdx : 0);
 const ordersBody = ordersRoute.slice(0, ordersRoute.indexOf("handleDeliverSubmission") >= 0 ? ordersRoute.indexOf("handleDeliverSubmission") : ordersRoute.length);
 assert(ordersBody.includes('resolveGigOrderPrice('), 'POST /api/orders prices gig orders server-side (resolveGigOrderPrice)');
-assert(ordersBody.indexOf('resolveGigOrderPrice(') < ordersBody.indexOf('financeLedger.fundEscrow('), 'Server price is resolved before escrow is funded');
+assert(ordersBody.indexOf('resolveGigOrderPrice(') < ordersBody.indexOf('fundOrderEscrowWithEvent('), 'Server price is resolved before escrow is funded');
 
 // 2. Startup + admin save must push every fee rule into the ledger.
 const serverCode = read('server.ts') + read('src/server/siteSettings.ts');

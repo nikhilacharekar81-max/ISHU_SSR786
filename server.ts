@@ -2246,6 +2246,27 @@ function assertOrderOpen(order: Order) {
   if (order.status === 'cancelled') throw new Error('Order is already cancelled; funds were already handled.');
 }
 
+function fundOrderEscrowWithEvent(params: { orderId: string; orderTitle: string; amount: number; buyerId: string; sellerId: string; actor: string; skipMinimum?: boolean }) {
+  const res = financeLedger.fundEscrow(params);
+  const order = orderIndex.get(params.orderId) || orders.find(o => o.id === params.orderId);
+  if (order) {
+    const sysMsg: Message = {
+      id: 'msg_' + Date.now(),
+      orderId: order.id,
+      senderId: 'system',
+      senderName: 'WorkSphere Escrow Desk',
+      text: `🔒 Escrow funded ($${params.amount}) for Order #${order.id}.`,
+      timestamp: new Date().toISOString(),
+      type: 'system',
+      metadata: { action: 'escrow_funded', amount: params.amount }
+    };
+    recordMessage(sysMsg);
+    saveMessagesToDisk();
+    broadcastMessage(sysMsg, order.id);
+  }
+  return res;
+}
+
 function releaseOrderFunds(order: Order, actor: string, reason: string, requestKey?: string) {
   if (requestKey && requestKeyCache.has(requestKey)) {
     return requestKeyCache.get(requestKey);
@@ -2275,6 +2296,21 @@ function releaseOrderFunds(order: Order, actor: string, reason: string, requestK
   }
   syncUserBalances();
   saveOrdersToDisk();
+
+  const sysMsg: Message = {
+    id: 'msg_' + Date.now(),
+    orderId: order.id,
+    senderId: 'system',
+    senderName: 'WorkSphere Review Desk',
+    text: `✅ Deliverable approved and order completed.`,
+    timestamp: new Date().toISOString(),
+    type: 'system',
+    metadata: { action: 'deliverable_approved', freelancerNet: result.freelancerNet }
+  };
+  recordMessage(sysMsg);
+  saveMessagesToDisk();
+  broadcastMessage(sysMsg, order.id);
+
   if (requestKey) requestKeyCache.set(requestKey, result);
   return result;
 }
@@ -2315,6 +2351,21 @@ function refundOrderFunds(order: Order, amount: number | undefined, actor: strin
   syncUserBalances();
   saveOrdersToDisk();
   saveRefundsToDisk();
+
+  const sysMsg: Message = {
+    id: 'msg_' + Date.now(),
+    orderId: order.id,
+    senderId: 'system',
+    senderName: 'WorkSphere Escrow Desk',
+    text: `💸 Escrow refunded ($${result.refunded}) to buyer. Reason: ${reason}`,
+    timestamp: new Date().toISOString(),
+    type: 'system',
+    metadata: { action: 'escrow_refunded', refunded: result.refunded }
+  };
+  recordMessage(sysMsg);
+  saveMessagesToDisk();
+  broadcastMessage(sysMsg, order.id);
+
   if (requestKey) requestKeyCache.set(requestKey, result);
   return result;
 }
@@ -3380,12 +3431,29 @@ app.post('/api/payments/escrow/release', requireAuth, (req, res) => {
     }
 
     // Mark any requested revisions as resolved upon approval
+    let revisionsResolved = false;
     if (Array.isArray(order.revisions)) {
       for (const rev of order.revisions) {
         if (rev.status === 'requested') {
           rev.status = 'resolved';
+          revisionsResolved = true;
         }
       }
+    }
+    if (revisionsResolved) {
+      const sysMsg: Message = {
+        id: 'msg_' + Date.now(),
+        orderId: order.id,
+        senderId: 'system',
+        senderName: 'WorkSphere Review Desk',
+        text: `📝 Revision resolved by buyer.`,
+        timestamp: new Date().toISOString(),
+        type: 'system',
+        metadata: { action: 'revision_resolved' }
+      };
+      recordMessage(sysMsg);
+      saveMessagesToDisk();
+      broadcastMessage(sysMsg, order.id);
     }
 
     const esc = financeLedger.getEscrow(order.id);
@@ -3551,7 +3619,7 @@ app.post('/api/payments/escrow/deposit', requireAuth, rateLimit(20, 60_000), (re
     ensureWallet(sellerId);
 
     // Call ledger engine to fund escrow atomically
-    financeLedger.fundEscrow({
+    fundOrderEscrowWithEvent({
       orderId: order.id,
       orderTitle: order.title,
       amount: order.amount,
@@ -5798,7 +5866,7 @@ app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
       newOrd = { id, title, buyerId, sellerId, amount: 0, status: 'in_progress', createdAt: today, dueDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0], gigId: req.body.gigId, projectId: req.body.projectId, ...(requirements ? { requirements } : {}) };
     } else {
       // Debits the buyer wallet into escrow. Throws (and creates nothing) if the balance is too low.
-      financeLedger.fundEscrow({ orderId: id, orderTitle: title, amount: rawAmount, buyerId, sellerId, actor: `user:${buyerId}` });
+      fundOrderEscrowWithEvent({ orderId: id, orderTitle: title, amount: rawAmount, buyerId, sellerId, actor: `user:${buyerId}` });
       newOrd = {
         id, title, buyerId, sellerId, amount: rawAmount, status: 'funded_in_escrow', createdAt: today,
         dueDate: serverDerivedDueDate,
@@ -6114,7 +6182,7 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
         return res.status(409).json({ error: 'Cannot fund escrow for order in current status.' });
       }
       const newTitle = offer.kind === 'proposal' && (/^inquiry:/i.test(order.title) || !order.amount) ? offer.title : order.title;
-      financeLedger.fundEscrow({ orderId: order.id, orderTitle: newTitle, amount: offer.amount, buyerId: order.buyerId, sellerId: order.sellerId, actor: `user:${order.buyerId}` });
+      fundOrderEscrowWithEvent({ orderId: order.id, orderTitle: newTitle, amount: offer.amount, buyerId: order.buyerId, sellerId: order.sellerId, actor: `user:${order.buyerId}` });
       order.title = newTitle;
       order.amount = offer.amount;
       order.status = 'funded_in_escrow';
