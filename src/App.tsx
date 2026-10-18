@@ -20,7 +20,6 @@ import { slugify } from './utils/slugify';
 import { getDeviceId } from './utils/deviceId';
 import { RESERVED_ROUTES } from './shared/routes';
 
-import * as DatabaseService from './services/DatabaseService';
 import { initialUsers, initialGigs, initialProjects, initialOrders } from './data/mockData';
 import {
   WorkstreamSidebar,
@@ -1573,6 +1572,18 @@ export default function App({ initialPath, initialData }: { initialPath?: string
     setLoginEmail('');
     setLoginPassword('');
     setLoginError(null);
+    setOrders([]);
+    setMessages([]);
+    setSelectedOrder(null);
+    setSelectedPersonFilter(null);
+    setWorkstreamSearch('');
+    setProjectFilterSearch('');
+    setWorkstreamTab('all');
+    setLikedGigIds([]);
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
     navigate('/login');
   };
 
@@ -2183,7 +2194,7 @@ export default function App({ initialPath, initialData }: { initialPath?: string
       <Header
         navigate={navigate}
         currentUser={impersonatedUser || currentUser}
-        orders={hydratedWorkstreamItems}
+        orders={currentUser || impersonatedUser ? hydratedWorkstreamItems : []}
         likedGigIds={likedGigIds}
         isGigsList={isGigsList}
         isGigDetail={isGigDetail}
@@ -4061,6 +4072,19 @@ export default function App({ initialPath, initialData }: { initialPath?: string
         
         {/* VIEW 6: WORKSTREAMS & MESSAGES (/messages) */}
         {isMessages && (
+          (!currentUser && !impersonatedUser) ? (
+            <div className="max-w-md mx-auto my-16 p-8 bg-white border border-slate-200 rounded-3xl text-center space-y-4 shadow-sm">
+              <Shield className="w-12 h-12 text-slate-400 mx-auto" />
+              <h2 className="text-xl font-bold text-fiverr-dark">Sign in to Access Your Workstreams</h2>
+              <p className="text-xs text-fiverr-muted">Track project milestones, real-time workstream messages, and escrow releases.</p>
+              <button 
+                onClick={() => setIsLoginModalOpen(true)} 
+                className="w-full py-2.5 bg-slate-900 text-white font-semibold rounded-xl hover:bg-slate-800 transition cursor-pointer"
+              >
+                Sign In to WorkPerHour
+              </button>
+            </div>
+          ) : (
           <div className="bg-slate-50 min-h-[750px] font-sans pb-12">
             {selectedOrder || messageOrderId ? (
               // Active Workstream Workspace View
@@ -4214,6 +4238,7 @@ export default function App({ initialPath, initialData }: { initialPath?: string
               currentUser={impersonatedUser || currentUser}
             />
           </div>
+          )
         )}
 
         {/* VIEW 7: CREATE GIG STUDIO (/create-gig) */}

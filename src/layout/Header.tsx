@@ -78,6 +78,13 @@ export function Header({
     };
   }, [isUserDropdownOpen, isWorkstreamsDropdownOpen, isHeaderSearchDropdownOpen, isHeaderCategoriesDropdownOpen]);
 
+  useEffect(() => {
+    if (!currentUser) {
+      setIsWorkstreamsDropdownOpen(false);
+      setIsUserDropdownOpen(false);
+    }
+  }, [currentUser]);
+
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200/80 backdrop-blur-md px-4 sm:px-6 py-3.5 flex items-center justify-between shadow-xs w-full max-w-full">
       {/* Left Side: Brand & Nav Links */}
@@ -299,8 +306,19 @@ export function Header({
         <div className="relative">
           <button 
             type="button"
-            onClick={(e) => {
+            onClick={async (e) => {
               e.stopPropagation();
+              let hasUser = !!currentUser;
+              if (!hasUser) {
+                const ok = await loadUserSession();
+                hasUser = ok;
+              }
+              if (!hasUser) {
+                setIsWorkstreamsDropdownOpen(false);
+                if (onOpenLogin) onOpenLogin();
+                else navigate('/login', e);
+                return;
+              }
               setIsWorkstreamsDropdownOpen(!isWorkstreamsDropdownOpen);
               setIsUserDropdownOpen(false);
               setIsHeaderSearchDropdownOpen(false);
@@ -312,7 +330,7 @@ export function Header({
             <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-emerald-500 rounded-full"></span>
           </button>
 
-          {isWorkstreamsDropdownOpen && (
+          {currentUser && isWorkstreamsDropdownOpen && (
             <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 py-3.5 z-[100] text-sm" onClick={(e) => e.stopPropagation()}>
               <div className="px-4 pb-3 mb-2.5 border-b border-slate-100 flex items-center justify-between">
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Workstreams</span>
@@ -322,7 +340,7 @@ export function Header({
               {orders.length === 0 ? (
                 <div className="p-6 text-center text-slate-400 space-y-2.5">
                   <Mail className="w-8 h-8 mx-auto text-slate-300" />
-                  <p className="text-xs font-bold text-slate-700">No active workstreams</p>
+                  <p className="text-xs font-bold text-slate-700">No workstreams yet</p>
                   <p className="text-[11px] text-slate-500">Explore gigs, post a project, or switch demo user to open an escrow workstream.</p>
                   <div className="flex items-center justify-center gap-2 pt-1">
                     <button
@@ -349,29 +367,45 @@ export function Header({
                 </div>
               ) : (
                 <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
-                  {orders.slice(0, 5).map(ord => (
-                    <div 
-                      key={ord.id}
-                      onClick={(e) => {
-                        setSelectedOrder(ord);
-                        fetchMessages(ord.id);
-                        setIsWorkstreamsDropdownOpen(false);
-                        navigate('/messages/' + ord.id, e);
-                      }}
-                      className="p-3 hover:bg-slate-50 transition-colors cursor-pointer flex items-start gap-3"
-                    >
-                      <img src="https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?w=100&h=100&fit=crop" className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-200 shrink-0 mt-0.5" />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-2 mb-0.5">
-                          <span className="font-bold text-fiverr-dark truncate">{ord.title}</span>
-                          <span className="text-[10px] text-slate-400 whitespace-nowrap font-mono">{ord.createdAt || '31 Jul 2026'}</span>
+                  {orders.slice(0, 5).map(ord => {
+                    const activeUid = currentUser?.id;
+                    const isBuyer = activeUid === ord.buyerId;
+                    const partner = isBuyer ? (ord as any).seller : (ord as any).buyer;
+                    const partnerName = partner?.name || (isBuyer ? ord.sellerUsername || 'Seller' : ord.buyerUsername || 'Buyer');
+                    const partnerAvatar = partner?.avatar;
+                    const previewText = (ord as any).lastMessage || ord.title;
+                    const rawDate = (ord as any).lastMessageTime || ord.createdAt;
+                    const formattedDate = rawDate ? new Date(rawDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+                    return (
+                      <div 
+                        key={ord.id}
+                        onClick={(e) => {
+                          setSelectedOrder(ord);
+                          fetchMessages(ord.id);
+                          setIsWorkstreamsDropdownOpen(false);
+                          navigate('/messages/' + ord.id, e);
+                        }}
+                        className="p-3 hover:bg-slate-50 transition-colors cursor-pointer flex items-start gap-3"
+                      >
+                        {partnerAvatar ? (
+                          <img src={partnerAvatar} alt={partnerName} className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-200 shrink-0 mt-0.5" />
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">
+                            {partnerName.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2 mb-0.5">
+                            <span className="font-bold text-fiverr-dark truncate">{partnerName}</span>
+                            <span className="text-[10px] text-slate-400 whitespace-nowrap font-mono">{formattedDate}</span>
+                          </div>
+                          <p className="text-[11px] text-fiverr-muted truncate">
+                            {previewText}
+                          </p>
                         </div>
-                        <p className="text-[11px] text-fiverr-muted truncate">
-                          {ord.requirements || 'Hi Nikhil, Hope you are doing well. Please check the deliverables.'}
-                        </p>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 

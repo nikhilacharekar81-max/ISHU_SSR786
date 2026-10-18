@@ -2222,7 +2222,11 @@ function pushSystemMessage(orderId: string, text: string, action = 'system_notic
 
 function closeActiveDispute(orderId: string, status: Dispute['status'], notes: string) {
   const d = disputes.find(x => x.orderId === orderId && (x.status === 'open' || x.status === 'under_investigation'));
-  if (d) { d.status = status; d.resolutionNotes = notes; }
+  if (d) {
+    d.status = status;
+    d.resolutionNotes = notes;
+    saveDisputesToDisk();
+  }
 }
 
 // Track orders whose release side-effects (seller.earned, seller.completedJobs) have been executed
@@ -4534,8 +4538,8 @@ app.post('/api/reviews', requireAuth, (req, res) => {
 
   const order = orderIndex.get(orderId);
   if (!order) return res.status(404).json({ error: 'Workstream order not found' });
-  if (!canAccessOrderWorkstream(caller, order)) {
-    return res.status(403).json({ error: 'Forbidden: Only order participants can submit reviews.' });
+  if (caller.id !== order.buyerId && caller.id !== order.sellerId) {
+    return res.status(403).json({ error: 'Forbidden: Only the buyer or seller of this order can submit a review.' });
   }
 
   // Validate targetUserId against actual seller/buyer associated with order
@@ -6245,7 +6249,7 @@ app.patch('/api/admin/users/:id/status', requireAdmin, (req, res) => {
     notifyUserOnAdminAction(u, req.body.status, req.body.notes);
   }
 
-  res.json(u);
+  res.json(safeUser(u));
 });
 
 app.post('/api/admin/users/:id/impersonate', requireAdmin, (req, res) => {
@@ -6266,7 +6270,7 @@ app.post('/api/admin/users/:id/impersonate', requireAdmin, (req, res) => {
   // Send security chat notification & email
   notifyUserOnAdminAction(u, 'impersonated');
 
-  res.json({ success: true, user: u });
+  res.json({ success: true, user: safeUser(u) });
 });
 
 app.post('/api/admin/users/:id/stop-impersonate', requireAdmin, (req, res) => {
@@ -6284,7 +6288,7 @@ app.post('/api/admin/users/:id/stop-impersonate', requireAdmin, (req, res) => {
     timestamp: new Date().toLocaleString()
   });
 
-  res.json({ success: true, user: u });
+  res.json({ success: true, user: safeUser(u) });
 });
 
 app.patch('/api/admin/users/:id/verify', requireAdmin, (req, res) => {
@@ -6303,7 +6307,7 @@ app.patch('/api/admin/users/:id/verify', requireAdmin, (req, res) => {
     timestamp: new Date().toLocaleString()
   });
 
-  res.json(u);
+  res.json(safeUser(u));
 });
 
 app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {

@@ -1208,8 +1208,14 @@ export class FinanceLedgerEngine {
   }
 
   // ----- persistence ------------------------------------------------------
+  private loadFailed = false;
+
   private saveToDisk() {
     if (process.env.NODE_ENV === 'test') return;
+    if (this.loadFailed) {
+      console.warn('Skipping ledger save to disk because initial load failed (preventing file overwrite).');
+      return;
+    }
     try {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -1274,7 +1280,8 @@ export class FinanceLedgerEngine {
         this.maximumWithdrawalAmount = data.config.maximumWithdrawalAmount ?? this.maximumWithdrawalAmount;
       }
     } catch (err) {
-      console.error('Failed to load financial ledger from disk (retaining valid in-memory state):', err);
+      this.loadFailed = true;
+      console.error('Failed to load financial ledger from disk (preventing overwrite of corrupted/unreadable state):', err);
     }
   }
 

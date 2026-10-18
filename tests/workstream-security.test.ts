@@ -336,6 +336,14 @@ async function run() {
 
   ok('review: validated, one per order, visible on seller profile, protected from unauthorized dumping');
 
+  // 14. auth enforcement on orders and messages endpoints
+  assert.strictEqual((await api('/api/orders')).status, 401, 'GET /api/orders without token must return 401');
+  assert.strictEqual((await api(`/api/orders/${ORDER}`)).status, 401, 'GET /api/orders/:id without token must return 401');
+  assert.strictEqual((await api(`/api/messages/${ORDER}`)).status, 401, 'GET /api/messages/:id without token must return 401');
+  assert.strictEqual((await api(`/api/orders/${ORDER}`, { token: outsider })).status, 403, 'GET /api/orders/:id by unrelated user must return 403');
+  assert.strictEqual((await api(`/api/messages/${ORDER}`, { token: outsider })).status, 403, 'GET /api/messages/:id by unrelated user must return 403');
+  ok('orders and messages endpoints require authentication and enforce participant access control (401/403)');
+
   console.log(`\n🎉 ${passed} Workstream security/lifecycle checks passed`);
 }
 

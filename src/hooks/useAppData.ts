@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { UserAccount, Gig, Project, Proposal, Order, Dispute, Refund, Payout, Category, Review, SupportTicket, AuditLog, Message } from '../types';
-import * as DatabaseService from '../services/DatabaseService';
 import { initialUsers, initialGigs, initialProjects, initialOrders } from '../data/mockData';
 import { getAuthToken } from '../utils/authToken';
 import { getDeviceId } from '../utils/deviceId';
@@ -39,13 +38,6 @@ export const useAppData = (initialData?: any) => {
       console.error(e);
     }
   };
-
-  useEffect(() => {
-    if (DatabaseService.Users && DatabaseService.Users.length > 0) setUsers(DatabaseService.Users);
-    if (DatabaseService.Gigs && DatabaseService.Gigs.length > 0) setGigs(DatabaseService.Gigs);
-    if (DatabaseService.Projects) setProjects(DatabaseService.Projects);
-    if (DatabaseService.Orders) setOrders(DatabaseService.Orders);
-  }, []);
 
 
 
@@ -110,11 +102,8 @@ export const useAppData = (initialData?: any) => {
       const categoriesData = cRes.ok ? await safeJson(cRes, []) : [];
       const reviewsData = revRes.ok ? await safeJson(revRes, []) : [];
 
-      if (usersData.length > 0) setUsers(usersData);
-      else setUsers(DatabaseService.Users);
-      
-      if (gigsData.length > 0) setGigs(gigsData);
-      else setGigs(DatabaseService.Gigs);
+      setUsers(usersData);
+      setGigs(gigsData);
 
       if (projectsData.length > 0) setProjects(projectsData);
       if (proposalsData.length > 0) setProposals(proposalsData);
