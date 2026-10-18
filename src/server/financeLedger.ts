@@ -628,10 +628,17 @@ export class FinanceLedgerEngine {
     return wallet;
   }
 
+  private ensureOperational() {
+    if (this.loadFailed) {
+      throw new Error('Ledger operational fault: Initial disk load failed. Financial operations are locked to prevent data inconsistency.');
+    }
+  }
+
   // ----- deposits ----------------------------------------------------------
   // Single entry point for money coming in. A payment-gateway webhook should call this with the
   // gateway's event/payment id as idempotencyKey; replays are harmless.
   public creditDeposit(params: { userId: string; amount: number; reference: string; idempotencyKey: string; actor: string; source?: string }) {
+    this.ensureOperational();
     const amount = FinanceLedgerEngine.assertMoney(params.amount, 'Deposit amount');
     const wallet = this.requireWallet(params.userId);
     if (wallet.userRole === 'admin') throw new Error('Deposits to admin wallets are not allowed.');
@@ -663,6 +670,7 @@ export class FinanceLedgerEngine {
 
   // Locks buyer wallet funds in escrow for an order. Fails if the buyer cannot afford it.
   public fundEscrow(params: { orderId: string; orderTitle: string; amount: number; buyerId: string; sellerId: string; actor: string; timestamp?: string; skipMinimum?: boolean }) {
+    this.ensureOperational();
     if (!params.orderId) throw new Error('orderId is required.');
     if (this.escrows.has(params.orderId)) throw new Error(`Order ${params.orderId} is already funded.`);
     const amount = FinanceLedgerEngine.assertMoney(params.amount, 'Order amount');
@@ -724,6 +732,7 @@ export class FinanceLedgerEngine {
 
   // Tops up an already funded escrow for an order with additional funds under the same orderId.
   public topUpEscrow(params: { orderId: string; orderTitle: string; amount: number; buyerId: string; sellerId: string; actor: string; timestamp?: string; skipMinimum?: boolean }) {
+    this.ensureOperational();
     if (!params.orderId) throw new Error('orderId is required.');
     const esc = this.escrows.get(params.orderId);
     if (!esc) {
@@ -774,6 +783,7 @@ export class FinanceLedgerEngine {
   // Releases everything still held for the order: net to seller, commission to the platform.
   // Can only succeed once per order; repeat calls throw and change nothing.
   public releaseEscrow(params: { orderId: string; actor: string; reason?: string; requestKey?: string }): { journal: LedgerJournal; freelancerNet: number; platformFee: number } {
+    this.ensureOperational();
     const cached = this.replay<{ journal: LedgerJournal; freelancerNet: number; platformFee: number }>(params.requestKey);
     if (cached) return cached;
     const esc = this.escrows.get(params.orderId);
@@ -816,6 +826,7 @@ export class FinanceLedgerEngine {
 
   // Refunds all (default) or part of what is still held back to the buyer wallet.
   public refundEscrow(params: { orderId: string; amount?: number; reason: string; actor: string; requestKey?: string }): { journal: LedgerJournal; buyerWallet: UserWallet; refunded: number; feesRefunded: number; remaining: number } {
+    this.ensureOperational();
     const cached = this.replay<{ journal: LedgerJournal; buyerWallet: UserWallet; refunded: number; feesRefunded: number; remaining: number }>(params.requestKey);
     if (cached) return cached;
     const why = FinanceLedgerEngine.assertReason(params.reason, 'A refund reason');

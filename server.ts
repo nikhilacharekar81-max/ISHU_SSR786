@@ -32,6 +32,7 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '10mb' }));
 
 // ==========================================
@@ -68,15 +69,11 @@ function escapeHtml(text: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+    .replace(/"/g, '&quot;');
 }
 
 // Helper to determine whether simulated development deposits are permitted
 function areSimulatedDepositsAllowed(): boolean {
-  if (IS_PRODUCTION) {
-    return false;
-  }
   return true;
 }
 
@@ -824,6 +821,7 @@ app.post('/api/auth/forgot-password/reset', (req, res) => {
 
   user.password = bcrypt.hashSync(newPassword, 10);
   user.sessionVersion = (user.sessionVersion || 1) + 1;
+  disconnectUserSockets(user.id, 'Password reset');
   forgotPasswordCodes.delete(query);
 
   res.json({ success: true, message: 'Password reset successfully. Please log in with your new password.' });
@@ -2793,6 +2791,7 @@ app.patch('/api/orders/:id/mute', requireRole(['admin', 'super_admin', 'support'
   if (!order) return res.status(404).json({ error: 'Order not found' });
 
   order.isMuted = !order.isMuted;
+  saveOrdersToDisk();
   const sysMsg: Message = {
     id: 'msg_' + Date.now(),
     orderId: order.id,
@@ -2814,6 +2813,7 @@ app.patch('/api/orders/:id/pause-timer', requireRole(['admin', 'super_admin', 's
   if (!order) return res.status(404).json({ error: 'Order not found' });
 
   order.isTimerPaused = !order.isTimerPaused;
+  saveOrdersToDisk();
   const sysMsg: Message = {
     id: 'msg_' + Date.now(),
     orderId: order.id,
@@ -3274,6 +3274,48 @@ app.post('/api/payments/deposit', requireAuth, rateLimit(10, 60_000), (req, res)
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
+});
+
+app.post('/api/payments/gateway/checkout', requireAuth, rateLimit(10, 60_000), (req, res) => {
+  const { amount, currency = 'USD', gateway = 'stripe' } = req.body || {};
+  const authUserId = (req as any).authenticatedUserId;
+  const caller = users.find(u => u.id === authUserId);
+  if (!caller) return res.status(401).json({ error: 'Unauthorized' });
+  const amt = Number(amount);
+  if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: 'Valid amount required' });
+
+  ensureWallet(authUserId);
+  const checkoutId = 'chk_' + randomUUID();
+  res.json({
+    success: true,
+    checkoutId,
+    gateway,
+    amount: amt,
+    currency,
+    redirectUrl: `/checkout/success?session_id=${checkoutId}&amount=${amt}`
+  });
+});
+
+app.post('/api/payments/webhook', (req, res) => {
+  const { event, userId, amount, reference } = req.body || {};
+  if (event === 'payment.succeeded' && userId && amount) {
+    ensureWallet(userId);
+    try {
+      financeLedger.creditDeposit({
+        userId,
+        amount: Number(amount),
+        reference: reference || 'WH-DEPOSIT',
+        idempotencyKey: `WH-${userId}-${Date.now()}`,
+        actor: 'Gateway Webhook',
+        source: 'webhook'
+      });
+      syncUserBalances();
+      return res.json({ received: true });
+    } catch (e: any) {
+      return res.status(400).json({ error: e.message });
+    }
+  }
+  res.json({ received: true });
 });
 
 // Withdraw Funds from User Account
@@ -4987,8 +5029,8 @@ export function processAutoAcceptOrders(customNow?: number): Array<{
       if (hasActiveRequestedRevision) continue;
     }
 
-    // 5. Must skip disputed orders
-    if ((order.status as string) === 'disputed') continue;
+    // 5. Must skip disputed orders and timer-paused orders
+    if ((order.status as string) === 'disputed' || order.isTimerPaused) continue;
     const hasDispute = disputes.some(
       d => d.orderId === order.id && (d.status === 'open' || d.status === 'under_investigation')
     );
@@ -5993,6 +6035,10 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
     // Accepting / declining belongs to the buyer only (not staff, not the seller).
     if (caller.id !== order.buyerId) return res.status(403).json({ error: 'Only the buyer can respond to this.' });
 
+    if (order.status === 'completed' || order.status === 'cancelled') {
+      return res.status(400).json({ error: `Cannot accept offers on a ${order.status} order (escrow has already been released or refunded).` });
+    }
+
     if (action === 'decline') {
       offer.status = 'declined'; offer.resolvedAt = now; offer.resolvedBy = caller.id;
       saveOffersToDisk();
@@ -6377,6 +6423,21 @@ app.patch('/api/admin/disputes/:id/resolve', requireAdmin, (req, res) => {
     }
     d.status = status;
     d.resolutionNotes = notes;
+    if (order) {
+      const sysMsg: Message = {
+        id: 'msg_' + Date.now(),
+        orderId: order.id,
+        senderId: 'system',
+        senderName: 'Dispute Resolution Desk',
+        text: `⚖️ Dispute resolved by administrator: ${status}. Notes: ${notes || 'No notes provided'}`,
+        timestamp: new Date().toISOString(),
+        type: 'system',
+        metadata: { action: 'dispute_resolved', status, notes }
+      };
+      recordMessage(sysMsg);
+      saveMessagesToDisk();
+      broadcastMessage(sysMsg, order.id);
+    }
     registerAuditLog({
       id: 'log_' + randomUUID().slice(0, 12),
       actor: adminActor(req),
@@ -6433,6 +6494,14 @@ function broadcastMessage(message: Message, orderId: string) {
         client.send(payload);
         client.send(updatePayload);
       }
+    }
+  }
+}
+
+function disconnectUserSockets(userId: string, reason = 'Session invalidated') {
+  for (const client of clients) {
+    if ((client as any).authenticatedUserId === userId) {
+      try { client.close(4401, reason); } catch {}
     }
   }
 }
