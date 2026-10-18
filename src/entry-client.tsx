@@ -6,12 +6,15 @@
 import { hydrateRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { installAuthFetch } from './utils/authToken';
 
 declare global {
   interface Window {
     __INITIAL_DATA__?: any;
   }
 }
+
+installAuthFetch();
 
 const initialData = window.__INITIAL_DATA__;
 const initialPath = window.location.pathname;

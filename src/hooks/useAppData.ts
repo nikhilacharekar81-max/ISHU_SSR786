@@ -71,37 +71,44 @@ export const useAppData = (initialData?: any) => {
       };
       const reqOpt = { headers: authHeaders };
 
-      const responses = await Promise.all([
+      let userRole: string | null = null;
+      try {
+        if (typeof window !== 'undefined') {
+          const cached = localStorage.getItem('current_user') || localStorage.getItem('user');
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (parsed?.role) userRole = parsed.role;
+          }
+        }
+        if (!userRole && token) {
+          const [b64] = token.split('.');
+          if (b64 && typeof atob === 'function') {
+            const json = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+            const payload = JSON.parse(json);
+            if (payload?.role) userRole = payload.role;
+          }
+        }
+      } catch {}
+
+      const isAdminOrSupport = Boolean(userRole && ['admin', 'super_admin', 'support'].includes(userRole));
+
+      const [uRes, gRes, pRes, prRes, oRes, cRes, revRes] = await Promise.all([
         fetch('/api/users', reqOpt),
         fetch('/api/gigs', reqOpt),
         fetch('/api/projects', reqOpt),
         fetch('/api/proposals', reqOpt),
         fetch('/api/orders', reqOpt),
-        fetch('/api/disputes', reqOpt),
-        fetch('/api/refunds', reqOpt),
-        fetch('/api/payouts', reqOpt),
         fetch('/api/categories', reqOpt),
-        fetch('/api/reviews', reqOpt),
-        fetch('/api/support-tickets', reqOpt),
-        fetch('/api/audit-logs', reqOpt),
-        fetch('/api/admin/settings', reqOpt)
+        fetch('/api/reviews', reqOpt)
       ]);
-
-      const [uRes, gRes, pRes, prRes, oRes, dRes, rRes, payRes, cRes, revRes, sRes, aRes, setRes] = responses;
 
       const usersData = uRes.ok ? await safeJson(uRes, []) : [];
       const gigsData = gRes.ok ? await safeJson(gRes, []) : [];
       const projectsData = pRes.ok ? await safeJson(pRes, []) : [];
       const proposalsData = prRes.ok ? await safeJson(prRes, []) : [];
       const ords = oRes.ok ? await safeJson(oRes, []) : [];
-      const disputesData = dRes.ok ? await safeJson(dRes, []) : [];
-      const refundsData = rRes.ok ? await safeJson(rRes, []) : [];
-      const payoutsData = payRes.ok ? await safeJson(payRes, []) : [];
       const categoriesData = cRes.ok ? await safeJson(cRes, []) : [];
       const reviewsData = revRes.ok ? await safeJson(revRes, []) : [];
-      const supportTicketsData = sRes.ok ? await safeJson(sRes, []) : [];
-      const auditLogsData = aRes.ok ? await safeJson(aRes, []) : [];
-      const settingsData = setRes.ok ? await safeJson(setRes, null) : null;
 
       if (usersData.length > 0) setUsers(usersData);
       else setUsers(DatabaseService.Users);
@@ -112,20 +119,39 @@ export const useAppData = (initialData?: any) => {
       if (projectsData.length > 0) setProjects(projectsData);
       if (proposalsData.length > 0) setProposals(proposalsData);
       if (ords.length > 0) setOrders(ords);
-      if (disputesData.length > 0) setDisputes(disputesData);
-      if (refundsData.length > 0) setRefunds(refundsData);
-      if (payoutsData.length > 0) setPayouts(payoutsData);
       if (categoriesData.length > 0) setCategories(categoriesData);
       if (reviewsData.length > 0) setReviews(reviewsData);
-      if (supportTicketsData.length > 0) setSupportTickets(supportTicketsData);
-      if (auditLogsData.length > 0) setAuditLogs(auditLogsData);
-      
-      if (settingsData) {
-        if (settingsData.freelancerCommissionRate !== undefined) setPlatformFee(settingsData.freelancerCommissionRate);
-        if (settingsData.clientServiceFee !== undefined) setClientServiceFee(settingsData.clientServiceFee);
-        if (settingsData.smallOrderFeeThreshold !== undefined) setSmallOrderFeeThreshold(settingsData.smallOrderFeeThreshold);
-        if (settingsData.smallOrderFeeAmount !== undefined) setSmallOrderFeeAmount(settingsData.smallOrderFeeAmount);
-        if (settingsData.escrowHoldDays !== undefined) setEscrowProtectionDays(settingsData.escrowHoldDays);
+
+      if (isAdminOrSupport) {
+        const [dRes, rRes, payRes, sRes, aRes, setRes] = await Promise.all([
+          fetch('/api/disputes', reqOpt),
+          fetch('/api/refunds', reqOpt),
+          fetch('/api/payouts', reqOpt),
+          fetch('/api/support-tickets', reqOpt),
+          fetch('/api/audit-logs', reqOpt),
+          fetch('/api/admin/settings', reqOpt)
+        ]);
+
+        const disputesData = dRes.ok ? await safeJson(dRes, []) : [];
+        const refundsData = rRes.ok ? await safeJson(rRes, []) : [];
+        const payoutsData = payRes.ok ? await safeJson(payRes, []) : [];
+        const supportTicketsData = sRes.ok ? await safeJson(sRes, []) : [];
+        const auditLogsData = aRes.ok ? await safeJson(aRes, []) : [];
+        const settingsData = setRes.ok ? await safeJson(setRes, null) : null;
+
+        if (disputesData.length > 0) setDisputes(disputesData);
+        if (refundsData.length > 0) setRefunds(refundsData);
+        if (payoutsData.length > 0) setPayouts(payoutsData);
+        if (supportTicketsData.length > 0) setSupportTickets(supportTicketsData);
+        if (auditLogsData.length > 0) setAuditLogs(auditLogsData);
+
+        if (settingsData) {
+          if (settingsData.freelancerCommissionRate !== undefined) setPlatformFee(settingsData.freelancerCommissionRate);
+          if (settingsData.clientServiceFee !== undefined) setClientServiceFee(settingsData.clientServiceFee);
+          if (settingsData.smallOrderFeeThreshold !== undefined) setSmallOrderFeeThreshold(settingsData.smallOrderFeeThreshold);
+          if (settingsData.smallOrderFeeAmount !== undefined) setSmallOrderFeeAmount(settingsData.smallOrderFeeAmount);
+          if (settingsData.escrowHoldDays !== undefined) setEscrowProtectionDays(settingsData.escrowHoldDays);
+        }
       }
     } catch (e) {
       setError('Failed to fetch data');

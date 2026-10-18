@@ -34,12 +34,6 @@ export async function setupSSR(
       server: { middlewareMode: true },
       appType: 'custom'
     });
-    app.get('/src/index.css', (req, res, next) => {
-      if (req.headers.accept?.includes('text/css') || (!req.url.includes('import') && !req.url.includes('direct'))) {
-        req.url = '/src/index.css?direct';
-      }
-      next();
-    });
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(root, 'dist');
@@ -65,12 +59,32 @@ export async function setupSSR(
 
     const pathname = req.originalUrl.split('?')[0];
     const ext = path.extname(pathname);
+    const accept = req.headers.accept || '';
+    const secFetchDest = req.headers['sec-fetch-dest'] || '';
+
+    const isViteOrAssetPath =
+      pathname.startsWith('/@vite') ||
+      pathname.startsWith('/@id') ||
+      pathname.startsWith('/@fs') ||
+      pathname.startsWith('/@react-refresh') ||
+      pathname.startsWith('/node_modules') ||
+      pathname.startsWith('/src') ||
+      Boolean(ext);
+
+    const isNonHtmlAccept =
+      Boolean(accept) &&
+      !accept.includes('text/html') &&
+      !accept.includes('*/*');
+
+    const isSubresourceFetch =
+      secFetchDest !== '' && secFetchDest !== 'document' && secFetchDest !== 'iframe' && secFetchDest !== 'empty';
+
+    if (!isProd && (isViteOrAssetPath || isNonHtmlAccept || isSubresourceFetch)) {
+      return next();
+    }
+
     if (ext) {
-      const publicPath = path.join(root, 'public', pathname);
-      const distClientPath = path.join(root, 'dist/client', pathname);
-      if (fs.existsSync(publicPath) || fs.existsSync(distClientPath)) {
-        return next();
-      }
+      return next();
     }
 
     try {

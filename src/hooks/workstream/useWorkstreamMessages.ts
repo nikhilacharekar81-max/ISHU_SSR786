@@ -65,7 +65,13 @@ export function useWorkstreamMessages(options: UseWorkstreamMessagesOptions = {}
       // Isolated cache merge: preserve all messages for other workstreams, update this order's messages
       setMessages(prev => {
         const otherMessages = prev.filter(m => m.orderId !== orderId);
-        const combined = [...otherMessages, ...newOrderMessages];
+        const byId = new Map<string, Message>();
+        for (const m of [...otherMessages, ...newOrderMessages]) {
+          if (m?.id) {
+            byId.set(m.id, m);
+          }
+        }
+        const combined = Array.from(byId.values());
         return combined.sort((a, b) => {
           const tA = a.timestamp ? new Date(a.timestamp).getTime() : NaN;
           const tB = b.timestamp ? new Date(b.timestamp).getTime() : NaN;

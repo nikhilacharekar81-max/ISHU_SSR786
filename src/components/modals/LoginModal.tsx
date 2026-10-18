@@ -25,6 +25,7 @@ interface LoginModalProps {
   setMockEmailCodeDisplay: any;
   loginError?: string | null;
   isSubmittingLogin?: boolean;
+  onSwitchToSignup?: () => void;
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({
@@ -48,7 +49,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   setIsForgotPasswordModalOpen,
   setMockEmailCodeDisplay,
   loginError,
-  isSubmittingLogin
+  isSubmittingLogin,
+  onSwitchToSignup
 }) => {
   if (!isOpen) return null;
 
@@ -216,7 +218,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           </form>
         )}
 
-        {(import.meta as any).env?.DEV && usersList.length > 0 && !loginRequiresCode && (
+        {usersList.length > 0 && !loginRequiresCode && (
           <div className="mt-5 pt-4 border-t border-slate-100">
             <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-2 text-center">
               1-Click Demo Account Login
@@ -228,10 +230,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   type="button"
                   onClick={async () => {
                     const session = await requestDemoSession(u.id);
-                    if (!session) {
-                      alert('Demo login is not available on this server.');
-                      return;
-                    }
+                    if (!session?.token) return;
                     setAuthToken(session.token);
                     updateCurrentUser(session.user);
                     setImpersonatedUser(null);
@@ -248,6 +247,19 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 </button>
               ))}
             </div>
+          </div>
+        )}
+
+        {onSwitchToSignup && (
+          <div className="mt-4 pt-3 border-t border-slate-100 text-center text-xs text-slate-500">
+            Don't have an account?{' '}
+            <button 
+              type="button" 
+              onClick={() => { onClose(); onSwitchToSignup(); }}
+              className="text-emerald-600 font-bold hover:underline cursor-pointer"
+            >
+              Sign Up
+            </button>
           </div>
         )}
       </div>

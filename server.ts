@@ -1670,7 +1670,12 @@ function registerOrder(o: Order) {
 function registerMessage(m: Message) {
   if (!m.orderId) return;
   const list = messageIndex.get(m.orderId) || [];
-  list.push(m);
+  const existingIdx = m.id ? list.findIndex(item => item.id === m.id) : -1;
+  if (existingIdx !== -1) {
+    list[existingIdx] = m;
+  } else {
+    list.push(m);
+  }
   messageIndex.set(m.orderId, list);
 }
 
@@ -1680,7 +1685,9 @@ function recordOrder(o: Order) {
 }
 
 function recordMessage(m: Message) {
-  messages.push(m);
+  if (!m.id || !messages.some(existing => existing.id === m.id)) {
+    messages.push(m);
+  }
   registerMessage(m);
 }
 
@@ -1724,7 +1731,13 @@ function loadInitialOrdersAndMessages() {
       if (Array.isArray(parsed) && parsed.length > 0) {
         const existingIds = new Set(parsed.map((m: any) => m.id));
         const merged = [...SEED_MESSAGES.filter(m => !existingIds.has(m.id)), ...parsed];
-        messages = merged;
+        const seenIds = new Set<string>();
+        messages = merged.filter((m: any) => {
+          if (!m?.id) return true;
+          if (seenIds.has(m.id)) return false;
+          seenIds.add(m.id);
+          return true;
+        });
       } else {
         messages = [...SEED_MESSAGES];
       }
@@ -1734,7 +1747,6 @@ function loadInitialOrdersAndMessages() {
   } else {
     messages = [...SEED_MESSAGES];
   }
-  messages.forEach(registerMessage);
   saveMessagesToDisk();
 
   // 3. Load Reviews

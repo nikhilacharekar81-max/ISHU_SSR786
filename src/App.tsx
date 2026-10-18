@@ -549,12 +549,6 @@ export default function App({ initialPath, initialData }: { initialPath?: string
   useEffect(() => {
     const handlePopState = () => {
       const newPath = window.location.pathname || '/';
-      if ((newPath.startsWith('/messages') || newPath.startsWith('/workstreams')) && !getAuthToken()) {
-        window.history.replaceState({}, '', '/');
-        setPath('/');
-        setIsLoginModalOpen(true);
-        return;
-      }
       setPath(newPath);
     };
     window.addEventListener('popstate', handlePopState);
@@ -590,10 +584,6 @@ export default function App({ initialPath, initialData }: { initialPath?: string
   }, [messageOrderId, orders, path]);
 
   const navigate = (to: string, e?: React.MouseEvent | MouseEvent) => {
-    if ((to.startsWith('/messages') || to.startsWith('/workstreams')) && !currentUser && !getAuthToken()) {
-      setIsLoginModalOpen(true);
-      return;
-    }
     if (e && typeof e.preventDefault === 'function') e.preventDefault();
     if (typeof window !== 'undefined') {
       window.history.pushState({}, '', to);
@@ -2206,6 +2196,9 @@ export default function App({ initialPath, initialData }: { initialPath?: string
         setSelectedOrder={setSelectedOrder}
         setPath={setPath}
         fetchMessages={fetchMessages}
+        onOpenLogin={() => setIsLoginModalOpen(true)}
+        onOpenSignup={() => setIsSignupModalOpen(true)}
+        onOpenSwitchUser={() => setIsUserSwitchModalOpen(true)}
       />
 
       {/* PeoplePerHour Category Navigation Bar */}
@@ -4361,6 +4354,7 @@ export default function App({ initialPath, initialData }: { initialPath?: string
         currentUser={currentUser || usersList[0]}
         setCurrentUser={updateCurrentUser}
         setImpersonatedUser={setImpersonatedUser}
+        refresh={refresh}
       />
 
       {/* PROFILE PAGE VIEW (Matches PeoplePerHour design from screenshot exactly) */}
@@ -4436,6 +4430,11 @@ export default function App({ initialPath, initialData }: { initialPath?: string
         setMockEmailCodeDisplay={setMockEmailCodeDisplay}
         loginError={loginError}
         isSubmittingLogin={isSubmittingLogin}
+        onSwitchToSignup={() => {
+          setIsLoginModalOpen(false);
+          setSignupEmail(loginEmail);
+          setIsSignupModalOpen(true);
+        }}
       />
 
       <SignupModal
