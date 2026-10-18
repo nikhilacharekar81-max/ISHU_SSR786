@@ -74,7 +74,7 @@ function escapeHtml(text: string): string {
 
 // Helper to determine whether simulated development deposits are permitted
 function areSimulatedDepositsAllowed(): boolean {
-  return true;
+  return !IS_PRODUCTION;
 }
 
 export function apiError(res: Response, message: string, status: number = 400) {
@@ -1408,21 +1408,7 @@ let bootstrapAdminPasswordNotice: string | null = null;
 if (IS_PRODUCTION && process.env.ADMIN_INITIAL_PASSWORD && process.env.ADMIN_INITIAL_PASSWORD.length < 12) {
   console.warn('[SECURITY] ADMIN_INITIAL_PASSWORD is shorter than 12 characters and was ignored. A random one-time password will be generated instead.');
 }
-function seedPasswordHashFor(role: string): string {
-  if (!IS_PRODUCTION) {
-    return bcrypt.hashSync(role === 'super_admin' ? 'adminpassword123' : 'password123', 10);
-  }
-  if (role === 'super_admin') {
-    const configured = process.env.ADMIN_INITIAL_PASSWORD;
-    if (configured && configured.length >= 12) return bcrypt.hashSync(configured, 10);
-    // One generated password shared by every seeded super admin (previously each admin got a different one
-    // and only the last was printed, locking out the others).
-    const generated = bootstrapAdminPasswordNotice ?? randomBytes(18).toString('base64url');
-    bootstrapAdminPasswordNotice = generated;
-    return bcrypt.hashSync(generated, 10);
-  }
-  return randomPasswordHash();
-}
+
 
 // Initial Data Seeds & Persistent Storage Engine
 export let users: User[] = SEED_USERS.map(u => ({
@@ -2251,7 +2237,7 @@ function fundOrderEscrowWithEvent(params: { orderId: string; orderTitle: string;
   const order = orderIndex.get(params.orderId) || orders.find(o => o.id === params.orderId);
   if (order) {
     const sysMsg: Message = {
-      id: 'msg_' + Date.now(),
+      id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       orderId: order.id,
       senderId: 'system',
       senderName: 'WorkSphere Escrow Desk',
@@ -2298,7 +2284,7 @@ function releaseOrderFunds(order: Order, actor: string, reason: string, requestK
   saveOrdersToDisk();
 
   const sysMsg: Message = {
-    id: 'msg_' + Date.now(),
+    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
     orderId: order.id,
     senderId: 'system',
     senderName: 'WorkSphere Review Desk',
@@ -2353,7 +2339,7 @@ function refundOrderFunds(order: Order, amount: number | undefined, actor: strin
   saveRefundsToDisk();
 
   const sysMsg: Message = {
-    id: 'msg_' + Date.now(),
+    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
     orderId: order.id,
     senderId: 'system',
     senderName: 'WorkSphere Escrow Desk',
@@ -2546,7 +2532,7 @@ app.patch('/api/orders/:id/extend-time', requireAdmin, (req, res) => {
 
   // Add system event message in chat
   const sysMsg: Message = {
-    id: 'msg_' + Date.now(),
+    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
     orderId: order.id,
     senderId: 'system',
     senderName: 'System / Admin Notice',
@@ -2670,7 +2656,7 @@ app.post('/api/orders/:id/deliverable', requireAuth, (req, res) => {
     if (storedReference) summaryParts.push(`Reference: ${storedReference}`);
     const fileSummary = summaryParts.length > 0 ? summaryParts.join(' | ') : 'written completion update';
     const sysMsg: Message = {
-      id: 'msg_' + Date.now(),
+      id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       orderId: order.id,
       senderId: 'system',
       senderName: 'WorkSphere Deliveries',
@@ -2738,7 +2724,7 @@ app.post('/api/orders/:id/revision', requireAuth, (req, res) => {
   order.status = 'revision';
 
   const sysMsg: Message = {
-    id: 'msg_' + Date.now(),
+    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
     orderId: order.id,
     senderId: 'system',
     senderName: 'WorkSphere Revision Desk',
@@ -2809,7 +2795,7 @@ app.post('/api/orders/:id/dispute', requireAuth, (req, res) => {
     order.status = 'disputed';
 
     const sysMsg: Message = {
-      id: 'msg_' + Date.now(),
+      id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       orderId: order.id,
       senderId: 'system',
       senderName: 'WorkSphere Dispute Resolution Desk',
@@ -2844,7 +2830,7 @@ app.patch('/api/orders/:id/mute', requireRole(['admin', 'super_admin', 'support'
   order.isMuted = !order.isMuted;
   saveOrdersToDisk();
   const sysMsg: Message = {
-    id: 'msg_' + Date.now(),
+    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
     orderId: order.id,
     senderId: 'system',
     senderName: 'Administration Alert',
@@ -2866,7 +2852,7 @@ app.patch('/api/orders/:id/pause-timer', requireRole(['admin', 'super_admin', 's
   order.isTimerPaused = !order.isTimerPaused;
   saveOrdersToDisk();
   const sysMsg: Message = {
-    id: 'msg_' + Date.now(),
+    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
     orderId: order.id,
     senderId: 'system',
     senderName: 'Administration Alert',
@@ -3348,6 +3334,11 @@ app.post('/api/payments/gateway/checkout', requireAuth, rateLimit(10, 60_000), (
 });
 
 app.post('/api/payments/webhook', (req, res) => {
+  const secret = req.headers['x-webhook-secret'];
+  if (!process.env.WEBHOOK_SECRET || secret !== process.env.WEBHOOK_SECRET) {
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+
   const { event, userId, amount, reference } = req.body || {};
   if (event === 'payment.succeeded' && userId && amount) {
     ensureWallet(userId);
@@ -3356,7 +3347,7 @@ app.post('/api/payments/webhook', (req, res) => {
         userId,
         amount: Number(amount),
         reference: reference || 'WH-DEPOSIT',
-        idempotencyKey: `WH-${userId}-${Date.now()}`,
+        idempotencyKey: `WH-${userId}-${reference || Date.now()}-${randomUUID().slice(0, 8)}`,
         actor: 'Gateway Webhook',
         source: 'webhook'
       });
@@ -3442,7 +3433,7 @@ app.post('/api/payments/escrow/release', requireAuth, (req, res) => {
     }
     if (revisionsResolved) {
       const sysMsg: Message = {
-        id: 'msg_' + Date.now(),
+        id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
         orderId: order.id,
         senderId: 'system',
         senderName: 'WorkSphere Review Desk',
@@ -3498,7 +3489,7 @@ app.post('/api/payments/escrow/release', requireAuth, (req, res) => {
     });
 
     const releaseMsg: Message = {
-      id: 'msg_' + Date.now(),
+      id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       orderId: order.id,
       senderId: 'system',
       senderName: 'WorkSphere Escrow Vault',
@@ -4698,7 +4689,7 @@ app.post('/api/reviews', requireAuth, (req, res) => {
 
   // Broadcast system message to workstream
   const sysMsg: Message = {
-    id: 'msg_' + Date.now(),
+    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
     orderId: order.id,
     senderId: 'system',
     senderName: 'WorkSphere Reviews',
@@ -4807,7 +4798,7 @@ app.post('/api/reviews/:id/reply', requireAuth, (req, res) => {
       saveOrdersToDisk();
 
       const sysMsg: Message = {
-        id: 'msg_' + Date.now(),
+        id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
         orderId: order.id,
         senderId: 'system',
         senderName: 'WorkSphere Reviews',
@@ -6493,7 +6484,7 @@ app.patch('/api/admin/disputes/:id/resolve', requireAdmin, (req, res) => {
     d.resolutionNotes = notes;
     if (order) {
       const sysMsg: Message = {
-        id: 'msg_' + Date.now(),
+        id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
         orderId: order.id,
         senderId: 'system',
         senderName: 'Dispute Resolution Desk',
