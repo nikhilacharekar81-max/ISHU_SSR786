@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { UserAccount, Gig, Project, Proposal, Order, Dispute, Refund, Payout, Category, Review, SupportTicket, AuditLog, Message } from '../types';
+import { UserAccount, Gig, Project, Proposal, Order, Dispute, Refund, Payout, Category, Review, SupportTicket, AuditLog, Message, WorkstreamOffer } from '../types';
 import { getAuthToken } from '../utils/authToken';
 import { getDeviceId } from '../utils/deviceId';
 
@@ -9,6 +9,7 @@ export const useAppData = (initialData?: any) => {
   const [gigs, setGigs] = useState<Gig[]>(initialData?.gigs ?? []);
   const [projects, setProjects] = useState<Project[]>(initialData?.projects ?? []);
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [offers, setOffers] = useState<WorkstreamOffer[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -81,11 +82,12 @@ export const useAppData = (initialData?: any) => {
 
       const isAdminOrSupport = Boolean(userRole && ['admin', 'super_admin', 'support'].includes(userRole));
 
-      const [uRes, gRes, pRes, prRes, oRes, cRes, revRes] = await Promise.all([
+      const [uRes, gRes, pRes, prRes, offRes, oRes, cRes, revRes] = await Promise.all([
         fetch('/api/users', reqOpt),
         fetch('/api/gigs', reqOpt),
         fetch('/api/projects', reqOpt),
         token ? fetch('/api/proposals', reqOpt) : Promise.resolve(null),
+        token ? fetch('/api/offers', reqOpt) : Promise.resolve(null),
         token ? fetch('/api/orders', reqOpt) : Promise.resolve(null),
         fetch('/api/categories', reqOpt),
         fetch('/api/reviews', reqOpt)
@@ -95,6 +97,7 @@ export const useAppData = (initialData?: any) => {
       const gigsData = await safeJson(gRes, null);
       const projectsData = await safeJson(pRes, null);
       const proposalsData = await safeJson(prRes, null);
+      const offersData = await safeJson(offRes, null);
       const ords = await safeJson(oRes, null);
       const categoriesData = await safeJson(cRes, null);
       const reviewsData = await safeJson(revRes, null);
@@ -103,6 +106,7 @@ export const useAppData = (initialData?: any) => {
       if (Array.isArray(gigsData) && gigsData.length > 0) setGigs(gigsData);
       if (Array.isArray(projectsData) && projectsData.length > 0) setProjects(projectsData);
       if (Array.isArray(proposalsData)) setProposals(proposalsData);
+      if (Array.isArray(offersData)) setOffers(offersData);
       if (Array.isArray(ords)) setOrders(ords);
       if (Array.isArray(categoriesData) && categoriesData.length > 0) setCategories(categoriesData);
       if (Array.isArray(reviewsData)) setReviews(reviewsData);
@@ -151,6 +155,7 @@ export const useAppData = (initialData?: any) => {
     gigs, setGigs,
     projects, setProjects,
     proposals, setProposals,
+    offers, setOffers,
     orders, setOrders,
     reviews, setReviews,
     messages, setMessages,

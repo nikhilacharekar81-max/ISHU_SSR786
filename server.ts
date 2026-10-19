@@ -1623,15 +1623,15 @@ async function writeJsonAtomic(filePath: string, data: any) {
   return task;
 }
 
-export function saveMessagesToDisk() { writeJsonAtomic(MESSAGES_FILE, messages); }
-export function saveOrdersToDisk() { writeJsonAtomic(ORDERS_FILE, orders); }
-export function saveReviewsToDisk() { writeJsonAtomic(REVIEWS_FILE, reviews); }
-export function saveRefundsToDisk() { writeJsonAtomic(REFUNDS_FILE, refunds); }
-export function saveDisputesToDisk() { writeJsonAtomic(DISPUTES_FILE, disputes); }
-export function saveProposalsToDisk() { writeJsonAtomic(PROPOSALS_FILE, proposals); }
-export function savePayoutsToDisk() { writeJsonAtomic(PAYOUTS_FILE, payouts); }
-export function saveProjectsToDisk() { writeJsonAtomic(PROJECTS_FILE, projects); }
-export function saveWorkstreamUploadIndex() { writeJsonAtomic(WORKSTREAM_UPLOAD_INDEX_FILE, workstreamUploadIndex); }
+export function saveMessagesToDisk() { return writeJsonAtomic(MESSAGES_FILE, messages); }
+export function saveOrdersToDisk() { return writeJsonAtomic(ORDERS_FILE, orders); }
+export function saveReviewsToDisk() { return writeJsonAtomic(REVIEWS_FILE, reviews); }
+export function saveRefundsToDisk() { return writeJsonAtomic(REFUNDS_FILE, refunds); }
+export function saveDisputesToDisk() { return writeJsonAtomic(DISPUTES_FILE, disputes); }
+export function saveProposalsToDisk() { return writeJsonAtomic(PROPOSALS_FILE, proposals); }
+export function savePayoutsToDisk() { return writeJsonAtomic(PAYOUTS_FILE, payouts); }
+export function saveProjectsToDisk() { return writeJsonAtomic(PROJECTS_FILE, projects); }
+export function saveWorkstreamUploadIndex() { return writeJsonAtomic(WORKSTREAM_UPLOAD_INDEX_FILE, workstreamUploadIndex); }
 
 function handleCorruption(filePath: string, error: any) {
   console.error(`CRITICAL: Data corruption in ${filePath}:`, error);
@@ -2637,7 +2637,7 @@ app.get('/api/orders/:id', requireAuth, (req, res) => {
 });
 
 // Extend Order Deadline
-app.patch('/api/orders/:id/extend-time', requireAdmin, (req, res) => {
+app.patch('/api/orders/:id/extend-time', requireAdmin, async (req, res) => {
   const order = orderIndex.get(req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
 
@@ -2667,8 +2667,8 @@ app.patch('/api/orders/:id/extend-time', requireAdmin, (req, res) => {
     metadata: { action: 'order_deadline_extended', oldDate, newDueDate: order.dueDate, reason } as any
   };
   recordMessage(sysMsg);
-  saveMessagesToDisk();
-  saveOrdersToDisk();
+  await saveMessagesToDisk();
+  await saveOrdersToDisk();
   broadcastMessage(sysMsg, order.id);
 
   registerAuditLog({
@@ -2685,16 +2685,17 @@ app.patch('/api/orders/:id/extend-time', requireAdmin, (req, res) => {
 });
 
 // Save Admin Private Notes
-app.post('/api/orders/:id/admin-notes', requireAdmin, (req, res) => {
+app.post('/api/orders/:id/admin-notes', requireAdmin, async (req, res) => {
   const order = orderIndex.get(req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
 
   order.adminNotes = req.body.notes || '';
+  await saveOrdersToDisk();
   res.json({ success: true, adminNotes: order.adminNotes });
 });
 
 // Upload Deliverable Override / File
-app.post('/api/orders/:id/deliverable', requireAuth, (req, res) => {
+app.post('/api/orders/:id/deliverable', requireAuth, async (req, res) => {
   const orderId = req.params.id;
   acquireOrderLock(orderId);
   try {
@@ -2825,7 +2826,7 @@ app.post('/api/orders/:id/deliverable', requireAuth, (req, res) => {
         existingPendingInv.note = trimmedNotes || existingPendingInv.note;
         existingPendingInv.files = uploadedFiles.length > 0 ? uploadedFiles : existingPendingInv.files;
         existingPendingInv.reference = storedReference || existingPendingInv.reference;
-        saveOffersToDisk();
+        await saveOffersToDisk();
         createdInvoiceOffer = viewOffer(existingPendingInv);
       } else if (invAmt > 0) {
         const newInv: WorkstreamOffer = {
@@ -2843,13 +2844,13 @@ app.post('/api/orders/:id/deliverable', requireAuth, (req, res) => {
           createdAt: new Date().toISOString()
         };
         workstreamOffers.push(newInv);
-        saveOffersToDisk();
+        await saveOffersToDisk();
         postOfferMessage(order, newInv, { id: caller?.id || order.sellerId, name: caller?.name || 'Seller' }, `New invoice ${newInv.number}: ${invTitle}`, 'offer_created');
         createdInvoiceOffer = viewOffer(newInv);
       }
     }
 
-    saveOrdersToDisk();
+    await saveOrdersToDisk();
 
     res.json({ success: true, files: uploadedFiles, file: uploadedFiles[0], offer: createdInvoiceOffer, order: enrichOrderWithServiceInfo(order) });
   } catch (err: any) {
@@ -2860,7 +2861,7 @@ app.post('/api/orders/:id/deliverable', requireAuth, (req, res) => {
 });
 
 // Request Revision on Deliverable
-app.post('/api/orders/:id/revision', requireAuth, (req, res) => {
+app.post('/api/orders/:id/revision', requireAuth, async (req, res) => {
   const orderId = req.params.id;
   acquireOrderLock(orderId);
   try {
@@ -2899,7 +2900,7 @@ app.post('/api/orders/:id/revision', requireAuth, (req, res) => {
   order.revisions.push(revisionEntry);
   order.status = 'revision';
 
-  saveOrdersToDisk();
+  await saveOrdersToDisk();
 
   emitSystemEvent(order.id, 'revision_requested', `Revision requested: "${reason}"`, {
     revisionId: revisionEntry.id,
@@ -2986,12 +2987,12 @@ app.post('/api/orders/:id/dispute', requireAuth, (req, res) => {
 });
 
 // Toggle Chat Mute
-app.patch('/api/orders/:id/mute', requireRole(['admin', 'super_admin', 'support']), (req, res) => {
+app.patch('/api/orders/:id/mute', requireRole(['admin', 'super_admin', 'support']), async (req, res) => {
   const order = orderIndex.get(req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
 
   order.isMuted = !order.isMuted;
-  saveOrdersToDisk();
+  await saveOrdersToDisk();
   const sysMsg: Message = {
     id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
     orderId: order.id,
@@ -3005,19 +3006,19 @@ app.patch('/api/orders/:id/mute', requireRole(['admin', 'super_admin', 'support'
     metadata: { action: order.isMuted ? 'chat_muted' : 'chat_unmuted' }
   };
   recordMessage(sysMsg);
-  saveMessagesToDisk();
+  await saveMessagesToDisk();
   broadcastMessage(sysMsg, order.id);
 
   res.json({ success: true, isMuted: order.isMuted });
 });
 
 // Toggle Pause Order Timer
-app.patch('/api/orders/:id/pause-timer', requireRole(['admin', 'super_admin', 'support']), (req, res) => {
+app.patch('/api/orders/:id/pause-timer', requireRole(['admin', 'super_admin', 'support']), async (req, res) => {
   const order = orderIndex.get(req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
 
   order.isTimerPaused = !order.isTimerPaused;
-  saveOrdersToDisk();
+  await saveOrdersToDisk();
   const sysMsg: Message = {
     id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
     orderId: order.id,
@@ -3138,7 +3139,7 @@ app.post('/api/orders/:id/force-cancel', requireAdmin, (req, res) => {
 });
 
 // Send Chat Message into Order Workstream (unrestricted, responsive buyer/seller communication)
-app.post('/api/orders/:id/message', requireAuth, rateLimit(120, 60_000), (req, res) => {
+app.post('/api/orders/:id/message', requireAuth, rateLimit(120, 60_000), async (req, res) => {
   const order = orderIndex.get(req.params.id);
   if (!order) return res.status(404).json({ error: 'Order not found' });
 
@@ -3164,7 +3165,7 @@ app.post('/api/orders/:id/message', requireAuth, rateLimit(120, 60_000), (req, r
     const newMsg = sanitizeAndCreateMessage(user, order, req.body, fileCheck);
 
     recordMessage(newMsg);
-    saveMessagesToDisk();
+    await saveMessagesToDisk();
     broadcastMessage(newMsg, order.id);
 
     res.json({ success: true, message: newMsg });
@@ -5987,7 +5988,7 @@ app.post('/api/proposals', requireAuth, (req, res) => {
 
 
 
-function processProposalAccept(req: any, res: any) {
+async function processProposalAccept(req: any, res: any) {
   const proposalId = req.params.id;
   const proposal = proposals.find(p => p.id === proposalId);
   if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
@@ -6070,11 +6071,11 @@ function processProposalAccept(req: any, res: any) {
       createdAt: new Date().toISOString()
     };
     workstreamOffers.push(offer);
-    saveOffersToDisk();
+    await saveOffersToDisk();
     
     // Register order in memory for message attachment
     recordOrder(order);
-    saveOrdersToDisk(); // CRASH SAFE POINT: Order is on disk as 'payment_pending'
+    await saveOrdersToDisk(); // CRASH SAFE POINT: Order IS ACTUALLY on disk as 'payment_pending' before funding
     emitSystemEvent(order.id, 'order_created', `Order placed: ${order.title}. Payment is held in escrow until the work is approved.`);
     postOfferMessage(order, offer, null, `Proposal ${offer.number} was created.`, 'offer_created');
 
@@ -6091,7 +6092,7 @@ function processProposalAccept(req: any, res: any) {
       
       // Update order status to funded only AFTER ledger successfully records the escrow
       order.status = 'funded_in_escrow';
-      saveOrdersToDisk();
+      await saveOrdersToDisk();
     } catch (fundingErr: any) {
       // Rollback memory and disk state if funding fails (e.g. insufficient wallet balance)
       const orderIdx = orders.findIndex(o => o.id === order.id);
@@ -6113,10 +6114,10 @@ function processProposalAccept(req: any, res: any) {
 
       workspaceService.deleteWorkspace(workspace.workspaceId);
 
-      saveOrdersToDisk();
-      saveOffersToDisk();
-      saveProposalsToDisk();
-      saveMessagesToDisk();
+      await saveOrdersToDisk();
+      await saveOffersToDisk();
+      await saveProposalsToDisk();
+      await saveMessagesToDisk();
 
       return res.status(400).json({ error: fundingErr.message || 'Failed to fund escrow for proposal.' });
     }
@@ -6124,14 +6125,14 @@ function processProposalAccept(req: any, res: any) {
     proposal.status = 'accepted';
     proposal.workstreamOrderId = order.id;
     proposal.offerId = offer.id;
-    saveProposalsToDisk();
+    await saveProposalsToDisk();
     
     syncUserBalances();
 
     offer.status = 'accepted';
     offer.resolvedAt = new Date().toISOString();
     offer.resolvedBy = caller.id;
-    saveOffersToDisk();
+    await saveOffersToDisk();
     
     postOfferMessage(order, offer, null, `Proposal ${offer.number} was accepted and escrow funded ($${order.amount}).`, 'offer_accepted');
 
@@ -6141,7 +6142,7 @@ function processProposalAccept(req: any, res: any) {
   }
 }
 
-function processProposalDecline(req: any, res: any) {
+async function processProposalDecline(req: any, res: any) {
   const proposalId = req.params.id;
   const proposal = proposals.find(p => p.id === proposalId);
   if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
@@ -6157,7 +6158,7 @@ function processProposalDecline(req: any, res: any) {
     if (proposal.status !== 'pending') return res.status(409).json({ error: `Proposal is already ${proposal.status}.` });
 
     proposal.status = 'rejected';
-    saveProposalsToDisk();
+    await saveProposalsToDisk();
 
     // If an offer existed, mark it as declined
     const offer = workstreamOffers.find(of => of.proposalId === proposal.id || of.id === proposal.offerId);
@@ -6165,7 +6166,7 @@ function processProposalDecline(req: any, res: any) {
       offer.status = 'declined';
       offer.resolvedAt = new Date().toISOString();
       offer.resolvedBy = caller.id;
-      saveOffersToDisk();
+      await saveOffersToDisk();
       const order = orders.find(o => o.id === offer.orderId);
       if (order) {
         postOfferMessage(order, offer, null, `${offer.number} was declined by the buyer.`, 'offer_declined');
@@ -6178,10 +6179,10 @@ function processProposalDecline(req: any, res: any) {
   }
 }
 
-app.post('/api/proposals/:id/accept', requireAuth, rateLimit(20, 60_000), (req, res) => processProposalAccept(req, res));
-app.post('/api/proposals/:id/decline', requireAuth, rateLimit(20, 60_000), (req, res) => processProposalDecline(req, res));
+app.post('/api/proposals/:id/accept', requireAuth, rateLimit(20, 60_000), async (req, res) => await processProposalAccept(req, res));
+app.post('/api/proposals/:id/decline', requireAuth, rateLimit(20, 60_000), async (req, res) => await processProposalDecline(req, res));
 
-app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
+app.post('/api/orders', requireAuth, rateLimit(30, 60_000), async (req, res) => {
   try {
     const authUserId = (req as any).authenticatedUserId;
     const caller = (req as any).authenticatedUser || users.find(u => u.id === authUserId);
@@ -6241,7 +6242,7 @@ app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
     }
     const enriched = enrichOrderWithServiceInfo(newOrd);
     recordOrder(enriched);
-    saveOrdersToDisk(); // CRASH SAFE POINT: Order recorded as 'payment_pending'
+    await saveOrdersToDisk(); // CRASH SAFE POINT: Order recorded as 'payment_pending' before funding
 
     if (!isInquiry) {
       try {
@@ -6249,7 +6250,7 @@ app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
         
         // Update order status to funded only AFTER ledger successfully records the escrow
         enriched.status = 'funded_in_escrow';
-        saveOrdersToDisk();
+        await saveOrdersToDisk();
         
         syncUserBalances();
       } catch (fundingErr: any) {
@@ -6264,8 +6265,8 @@ app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
           }
         }
 
-        saveOrdersToDisk();
-        saveMessagesToDisk();
+        await saveOrdersToDisk();
+        await saveMessagesToDisk();
 
         // Cleanup orphaned workspace if this was the only order in it
         const wsId = (enriched as any).workspaceId;
@@ -6294,7 +6295,7 @@ app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
           timestamp: new Date(Date.now() + 1).toISOString(),
           metadata: { action: 'requirements_logged' }
         } as Message);
-        saveMessagesToDisk();
+        await saveMessagesToDisk();
       }
     }
     res.status(201).json(enriched);
@@ -6421,6 +6422,15 @@ function offerCaller(req: Request) {
 }
 
 // Admin Proposals Management Endpoints
+
+
+app.get('/api/offers', requireAuth, (req, res) => {
+  const authUserId = (req as any).authenticatedUserId;
+  const userOrders = orders.filter(o => o.buyerId === authUserId || o.sellerId === authUserId);
+  const userOrderIds = new Set(userOrders.map(o => o.id));
+  const userOffers = workstreamOffers.filter(of => userOrderIds.has(of.orderId));
+  res.json(userOffers.map(viewOffer));
+});
 
 app.get('/api/orders/:id/offers', requireAuth, (req, res) => {
   const caller = offerCaller(req);
@@ -6561,7 +6571,7 @@ app.post('/api/orders/:id/offers', requireAuth, rateLimit(20, 60_000), (req, res
   }
 });
 
-app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimit(20, 60_000), (req, res) => {
+app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimit(20, 60_000), async (req, res) => {
   const offer = workstreamOffers.find(o => o.id === req.params.id);
   const order = offer ? orders.find(o => o.id === offer.orderId) : undefined;
   if (!offer || !order) return res.status(404).json({ error: 'Not found' });
@@ -6594,17 +6604,17 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
         const linkedProp = findLinkedProposalForOffer(offer, order);
         if (linkedProp && linkedProp.status === 'pending') {
           linkedProp.status = 'rejected';
-          saveProposalsToDisk();
+          await saveProposalsToDisk();
         }
       }
       if (offer.kind === 'invoice' && (order.status === 'delivered' || order.status === 'draft_review')) {
         const otherPendingInvoice = workstreamOffers.some(o => o.orderId === order.id && o.id !== offer.id && o.kind === 'invoice' && o.status === 'pending');
         if (!otherPendingInvoice && orderHasEscrow(order.id)) {
           order.status = 'in_progress';
-          saveOrdersToDisk();
+          await saveOrdersToDisk();
         }
       }
-      saveOffersToDisk();
+      await saveOffersToDisk();
       postOfferMessage(order, offer, null, `${offer.number} was cancelled by the seller.`, 'offer_cancelled');
       return res.json({ offer: viewOffer(offer), order: enrichOrderWithServiceInfo(order) });
     }
@@ -6625,7 +6635,7 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
         const linkedProp = findLinkedProposalForOffer(offer, order);
         if (linkedProp) {
           linkedProp.status = 'rejected';
-          saveProposalsToDisk();
+          await saveProposalsToDisk();
         }
       } else if (offer.kind === 'invoice' && (order.status === 'delivered' || order.status === 'draft_review')) {
         const otherPendingInvoice = workstreamOffers.some(o => o.orderId === order.id && o.id !== offer.id && o.kind === 'invoice' && o.status === 'pending');
@@ -6634,7 +6644,7 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
           saveOrdersToDisk();
         }
       }
-      saveOffersToDisk();
+      await saveOffersToDisk();
       postOfferMessage(order, offer, null, `${offer.number} was declined by the buyer.`, 'offer_declined');
       return res.json({ offer: viewOffer(offer), order: enrichOrderWithServiceInfo(order) });
     }
@@ -6698,9 +6708,9 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
       offer.resolvedBy = caller.id;
 
       syncUserBalances();
-      saveOffersToDisk();
-      saveOrdersToDisk();
-      saveMessagesToDisk();
+      await saveOffersToDisk();
+      await saveOrdersToDisk();
+      await saveMessagesToDisk();
       const completionNote = additionalAmount > 0
         ? `${offer.number} ($${invoiceAmount.toLocaleString()}) was paid (+$${additionalAmount.toLocaleString()} funded from wallet) and full escrow ($${invoiceAmount.toLocaleString()}) was released to the seller. Order completed!`
         : `${offer.number} was accepted and escrow funds ($${invoiceAmount.toLocaleString()}) were released to the seller. Order completed!`;
@@ -6713,6 +6723,9 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
         return res.status(409).json({ error: 'Cannot fund escrow for order in current status.' });
       }
       const newTitle = offer.kind === 'proposal' && (/^inquiry:/i.test(order.title) || !order.amount) ? offer.title : order.title;
+      order.status = 'payment_pending';
+      await saveOrdersToDisk(); // CRASH SAFE POINT: Order is durable as payment_pending before ledger funding
+
       fundOrderEscrowWithEvent({ orderId: order.id, orderTitle: newTitle, amount: offer.amount, buyerId: order.buyerId, sellerId: order.sellerId, actor: `user:${order.buyerId}` });
       order.title = newTitle;
       order.amount = offer.amount;
@@ -6732,9 +6745,10 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
           linkedProp.workstreamOrderId = order.id;
           linkedProp.offerId = offer.id;
           order.proposalId = linkedProp.id;
-          saveProposalsToDisk();
+          await saveProposalsToDisk();
         }
       }
+      await saveOrdersToDisk();
       postOfferMessage(order, offer, null, `${offer.number} was accepted and escrow was funded ($${offer.amount}).`, 'offer_accepted');
     } else if (isFollowOnAfterCompletion) {
       // PeoplePerHour Follow-On Proposal / Deposit accepted in the same WorkStream after previous invoice was paid
@@ -6763,7 +6777,7 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
       // 1. Record & save order FIRST so it exists in memory / index for system event attachment
       const enrichedOrder = enrichOrderWithServiceInfo(newOrder);
       recordOrder(enrichedOrder);
-      saveOrdersToDisk(); // CRASH SAFE POINT: Order recorded as 'payment_pending'
+      await saveOrdersToDisk(); // CRASH SAFE POINT: Order recorded as 'payment_pending' before funding
       emitSystemEvent(newOrder.id, 'order_created', `Order placed: ${newOrder.title}. Payment is held in escrow until the work is approved.`);
 
       // 2. Fund escrow with rollback on failure
@@ -6779,7 +6793,7 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
         
         // Update order status to funded only AFTER ledger successfully records the escrow
         enrichedOrder.status = 'funded_in_escrow';
-        saveOrdersToDisk();
+        await saveOrdersToDisk();
         
         syncUserBalances();
       } catch (fundingErr: any) {
@@ -6794,8 +6808,8 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
           }
         }
 
-        saveOrdersToDisk();
-        saveMessagesToDisk();
+        await saveOrdersToDisk();
+        await saveMessagesToDisk();
         return res.status(400).json({ error: fundingErr.message || 'Failed to fund escrow for follow-on order.' });
       }
 
@@ -6826,7 +6840,7 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
           linkedProp.status = 'accepted';
           linkedProp.workstreamOrderId = order.id;
           linkedProp.offerId = offer.id;
-          saveProposalsToDisk();
+          await saveProposalsToDisk();
         }
       }
       postOfferMessage(order, offer, null, `${offer.number} was accepted and escrow was topped up with $${offer.amount}. All funds and milestones remain unified under Order #${order.id}.`, 'offer_accepted');
@@ -6834,8 +6848,8 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
 
     offer.resolvedAt = now; offer.resolvedBy = caller.id;
     syncUserBalances();
-    saveOrdersToDisk();
-    saveOffersToDisk();
+    await saveOrdersToDisk();
+    await saveOffersToDisk();
     res.json({ offer: viewOffer(offer), order: enrichOrderWithServiceInfo(order) });
   } catch (err: any) {
     // fundEscrow throws on insufficient balance, frozen wallets, below-minimum amounts, etc. Nothing was changed.
@@ -6846,12 +6860,12 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
 });
 
 // Direct Buyer Proposal Accept / Decline Endpoint (supports hiring multiple freelancers on the same project)
-app.post('/api/proposals/:id/:action(accept|decline)', requireAuth, rateLimit(20, 60_000), (req, res) => {
-  if (req.params.action === 'accept') return processProposalAccept(req, res);
-  return processProposalDecline(req, res);
+app.post('/api/proposals/:id/:action(accept|decline)', requireAuth, rateLimit(20, 60_000), async (req, res) => {
+  if (req.params.action === 'accept') return await processProposalAccept(req, res);
+  return await processProposalDecline(req, res);
 });
 
-app.patch('/api/admin/proposals/:id', requireAdmin, (req, res) => {
+app.patch('/api/admin/proposals/:id', requireAdmin, async (req, res) => {
   const p = proposals.find(prop => prop.id === req.params.id);
   if (!p) return res.status(404).json({ error: 'Proposal not found' });
 
@@ -6869,11 +6883,11 @@ app.patch('/api/admin/proposals/:id', requireAdmin, (req, res) => {
     details: `Updated bid parameters ($${p.bidAmount}), delivery days (${p.deliveryDays}d), or status (${p.status}) for freelancer ${p.freelancerName}`,
     timestamp: new Date().toLocaleString()
   });
-
+  await saveProposalsToDisk();
   res.json(p);
 });
 
-app.patch('/api/admin/proposals/:id/status', requireAdmin, (req, res) => {
+app.patch('/api/admin/proposals/:id/status', requireAdmin, async (req, res) => {
   const p = proposals.find(prop => prop.id === req.params.id);
   if (!p) return res.status(404).json({ error: 'Proposal not found' });
 
@@ -6890,10 +6904,11 @@ app.patch('/api/admin/proposals/:id/status', requireAdmin, (req, res) => {
     timestamp: new Date().toLocaleString()
   });
 
+  await saveProposalsToDisk();
   res.json(p);
 });
 
-app.delete('/api/admin/proposals/:id', requireAdmin, (req, res) => {
+app.delete('/api/admin/proposals/:id', requireAdmin, async (req, res) => {
   const index = proposals.findIndex(prop => prop.id === req.params.id);
   if (index === -1) return res.status(404).json({ error: 'Proposal not found' });
 
@@ -6904,8 +6919,9 @@ app.delete('/api/admin/proposals/:id', requireAdmin, (req, res) => {
   const proj = projects.find(p => p.id === deleted.projectId);
   if (proj && proj.proposalsCount > 0) {
     proj.proposalsCount -= 1;
-    saveProjectsToDisk();
+    await saveProjectsToDisk();
   }
+  await saveProposalsToDisk();
 
   registerAuditLog({
     id: 'log_' + Date.now(),

@@ -556,7 +556,7 @@ export function Header({
                 </div>
 
                 <button 
-                  onClick={(e) => { setIsUserDropdownOpen(false); navigate('/projects', e); }} 
+                  onClick={(e) => { setIsUserDropdownOpen(false); navigate('/buyer-activity', e); }} 
                   className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-50 text-fiverr-dark font-semibold flex items-center gap-2.5 transition cursor-pointer"
                 >
                   <Briefcase className="w-4 h-4 text-indigo-600" />

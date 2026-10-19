@@ -397,3 +397,25 @@ export interface AppNotification {
   read: boolean;
   createdAt: string;
 }
+
+export type WorkstreamOfferKind = 'proposal' | 'invoice' | 'deposit';
+export type WorkstreamOfferStatus = 'pending' | 'accepted' | 'paid' | 'declined' | 'cancelled';
+
+export interface WorkstreamOffer {
+  id: string;
+  number: string;
+  orderId: string;
+  proposalId?: string;
+  kind: WorkstreamOfferKind;
+  title: string;
+  amount: number;
+  deliveryDays?: number;
+  note?: string;
+  files?: Array<{ id?: string; name: string; size: string; url: string; uploadedAt?: string }>;
+  reference?: string;
+  status: WorkstreamOfferStatus;
+  createdBy: string;
+  createdAt: string;
+  resolvedAt?: string;
+  resolvedBy?: string;
+}

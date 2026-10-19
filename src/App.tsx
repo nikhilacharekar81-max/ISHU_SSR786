@@ -9,7 +9,7 @@ import { FreelancerProfileView } from './components/FreelancerProfileView';
 import { EditUserProfileModal } from './components/profile/EditUserProfileModal';
 import { HeaderCategoriesNav, PPH_CATEGORIES } from './components/HeaderCategoriesNav';
 import { ViewingGigModal, EditGigModal, DeleteGigModal, CreateGigView, RelatedGigsSection, GigDetailView } from './components/gigs';
-import { FreelancerSearchView, ProjectSearchView, ProjectDetailView } from './components/marketplace';
+import { FreelancerSearchView, ProjectSearchView, ProjectDetailView, BuyerActivityView } from './components/marketplace';
 import { Reviews } from './components/gig_reviews';
 import { useAppData } from './hooks/useAppData';
 import { Header, Footer, ImpersonationBanner } from './layout';
@@ -136,6 +136,7 @@ export default function App({ initialPath, initialData }: { initialPath?: string
     gigs, setGigs,
     projects, setProjects,
     proposals, setProposals,
+    offers, setOffers,
     orders, setOrders,
     reviews: appReviews, setReviews: setAppReviews,
     messages, setMessages,
@@ -486,6 +487,7 @@ export default function App({ initialPath, initialData }: { initialPath?: string
   const isWishlistRoute = cleanPath === '/wishlist';
   const isNotificationsRoute = cleanPath === '/notifications';
   const isSwitchUserRoute = cleanPath === '/switch-user';
+  const isBuyerActivity = cleanPath === '/buyer-activity' || cleanPath === '/manage/projects' || cleanPath === '/buyer/activity';
 
   // Gig detail route check: Fiverr style /:username/:slug OR /gigs/:id
   let currentGig: Gig | undefined;
@@ -549,7 +551,7 @@ export default function App({ initialPath, initialData }: { initialPath?: string
       }) || (initialData?.profileUser) || (impersonatedUser || currentUser || usersList[0]))
     : null;
 
-  const isGigsList = (cleanPath === '/gigs' || cleanPath === '/' || isCategoryRoute) && !isGigDetail && !isProfilePage && !isEditProfile && !isSettings && !isProjectsList && !isFreelancersPage && !isOrders && !isMessages && !isCreateGig && !isPostProject && !isPayments && !isAdmin && !isSupport;
+  const isGigsList = (cleanPath === '/gigs' || cleanPath === '/' || isCategoryRoute) && !isGigDetail && !isProfilePage && !isEditProfile && !isSettings && !isProjectsList && !isFreelancersPage && !isOrders && !isMessages && !isCreateGig && !isPostProject && !isPayments && !isAdmin && !isSupport && !isBuyerActivity;
 
   // Sync pathname route
   useEffect(() => {
@@ -3069,6 +3071,16 @@ export default function App({ initialPath, initialData }: { initialPath?: string
             onContactBuyer={(buyerId, buyerName, projectTitle, projectId) => {
               handleContactSeller(buyerId, buyerName, projectTitle, undefined, projectId);
             }}
+          />
+        )}
+
+        {isBuyerActivity && (
+          <BuyerActivityView
+            projects={projects}
+            orders={orders}
+            offers={offers}
+            currentUser={impersonatedUser || currentUser}
+            navigate={navigate}
           />
         )}
 

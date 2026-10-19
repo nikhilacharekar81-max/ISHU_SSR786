@@ -6,7 +6,7 @@
 export const PRIVATE_ROUTES = [
   'admin', 'messages', 'workstream', 'workstreams', 'workspace', 'orders', 'payments', 
   'wallet', 'settings', 'edit-profile', 'login', 'signup', 'forgot-password', 'verify', 
-  'wishlist', 'notifications', 'switch-user', 'post-project', 'create-gig', 'support', 'freelancer', 'freelance-activity'
+  'wishlist', 'notifications', 'switch-user', 'post-project', 'create-gig', 'support', 'freelancer', 'freelance-activity', 'buyer-activity'
 ];
 
 export const RESERVED_ROUTES = [
