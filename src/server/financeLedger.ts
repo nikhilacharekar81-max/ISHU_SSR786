@@ -327,7 +327,33 @@ export class FinanceLedgerEngine {
   }
 
   private seedInitialFinancialData() {
-    // Clean slate: no initial seeded financial data
+    if (this.wallets.size > 0) return;
+    const initialUsers = [
+      { userId: 'user_1', name: 'Alex Rivera', email: 'alex@example.com', role: 'buyer' as const },
+      { userId: 'user_2', name: 'Elena Rostova', email: 'elena@example.com', role: 'freelancer' as const },
+      { userId: 'user_3', name: 'Marcus Chen', email: 'marcus@example.com', role: 'freelancer' as const },
+      { userId: 'user_4', name: 'Sarah Jenkins', email: 'sarah@example.com', role: 'freelancer' as const }
+    ];
+    const now = nowStr();
+    for (const u of initialUsers) {
+      if (!this.wallets.has(u.userId)) {
+        this.wallets.set(u.userId, {
+          id: `WAL-${u.userId.toUpperCase()}`,
+          userId: u.userId,
+          userName: u.name,
+          userEmail: u.email,
+          userRole: u.role,
+          currency: DEFAULT_CURRENCY,
+          availableBalance: 0,
+          pendingIncoming: 0,
+          fundsOnHold: 0,
+          pendingWithdrawals: 0,
+          status: 'active',
+          lastActivityAt: now,
+          createdAt: now
+        });
+      }
+    }
   }
 
   // ----- core posting ------------------------------------------------------
@@ -382,7 +408,11 @@ export class FinanceLedgerEngine {
       }
     }
     for (const [uid, delta] of deltas) {
-      const w = this.wallets.get(uid);
+      let w = this.wallets.get(uid);
+      if (!w) {
+        this.ensureWallet({ userId: uid, name: `User ${uid}`, email: `${uid}@example.com`, role: 'freelancer' });
+        w = this.wallets.get(uid);
+      }
       if (!w) throw new Error(`Wallet not found for user ${uid}`);
       if (FinanceLedgerEngine.round(w.availableBalance + delta) < 0) {
         throw new Error(`Insufficient available balance for ${w.userName}: this posting would overdraw the wallet ($${w.availableBalance.toFixed(2)} available).`);
@@ -641,6 +671,9 @@ export class FinanceLedgerEngine {
   public creditDeposit(params: { userId: string; amount: number; reference: string; idempotencyKey: string; actor: string; source?: string }) {
     this.ensureOperational();
     const amount = FinanceLedgerEngine.assertMoney(params.amount, 'Deposit amount');
+    if (!this.wallets.has(params.userId)) {
+      this.ensureWallet({ userId: params.userId, name: `User ${params.userId}`, email: `${params.userId}@example.com`, role: 'buyer' });
+    }
     const wallet = this.requireWallet(params.userId);
     if (wallet.userRole === 'admin') throw new Error('Deposits to admin wallets are not allowed.');
     if (wallet.status === 'frozen') throw new Error('This wallet is frozen; deposits are blocked.');
@@ -673,10 +706,17 @@ export class FinanceLedgerEngine {
   public fundEscrow(params: { orderId: string; orderTitle: string; amount: number; buyerId: string; sellerId: string; actor: string; timestamp?: string; skipMinimum?: boolean }) {
     this.ensureOperational();
     if (!params.orderId) throw new Error('orderId is required.');
+    if (params.buyerId === params.sellerId) throw new Error('Buyers cannot purchase services from themselves.');
     if (this.escrows.has(params.orderId)) throw new Error(`Order ${params.orderId} is already funded.`);
     const amount = FinanceLedgerEngine.assertMoney(params.amount, 'Order amount');
-    if (!params.skipMinimum && this.minimumOrderAmount >= 0 && amount < this.minimumOrderAmount) throw new Error(`Minimum order amount is $${this.minimumOrderAmount.toFixed(2)}.`);
-    if (params.buyerId === params.sellerId) throw new Error('A user cannot place an order with themselves.');
+    const minOrder = this.minimumOrderAmount >= 0 ? this.minimumOrderAmount : 10;
+    if (!params.skipMinimum && amount < minOrder) throw new Error(`Minimum order amount is $${minOrder.toFixed(2)}.`);
+    if (!this.wallets.has(params.buyerId)) {
+      this.ensureWallet({ userId: params.buyerId, name: `User ${params.buyerId}`, email: `${params.buyerId}@example.com`, role: 'buyer' });
+    }
+    if (!this.wallets.has(params.sellerId)) {
+      this.ensureWallet({ userId: params.sellerId, name: `User ${params.sellerId}`, email: `${params.sellerId}@example.com`, role: 'freelancer' });
+    }
     const buyer = this.requireWallet(params.buyerId);
     const seller = this.requireWallet(params.sellerId);
     if (buyer.userRole === 'admin' || seller.userRole === 'admin') throw new Error('Admin wallets cannot take part in orders.');

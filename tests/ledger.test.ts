@@ -18,6 +18,9 @@ function assert(condition: boolean, testName: string, details?: string) {
 
 function runTests() {
   const engine = new FinanceLedgerEngine();
+  engine.ensureWallet({ userId: 'user_1', name: 'Alex Rivera', email: 'alex@example.com', role: 'buyer' });
+  engine.ensureWallet({ userId: 'user_2', name: 'Elena Rostova', email: 'elena@example.com', role: 'freelancer' });
+  engine.ensureWallet({ userId: 'user_3', name: 'Marcus Chen', email: 'marcus@example.com', role: 'freelancer' });
 
   // Test 1: Initial state trial balance equality (Total Debits === Total Credits)
   const initialOverview = engine.getFinancialOverview();

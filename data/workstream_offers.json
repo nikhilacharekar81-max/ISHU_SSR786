@@ -11,5 +11,19 @@
     "status": "pending",
     "createdBy": "user_2",
     "createdAt": "2026-10-19T15:11:16.009Z"
+  },
+  {
+    "id": "off_750b4dd7-253",
+    "number": "PRP-1002",
+    "orderId": "ord_d9e1eb22-ce1",
+    "proposalId": "prop_1792430969158_3rqw",
+    "kind": "proposal",
+    "title": "Custom LLM Prompt Engineering for Legal Document Analysis",
+    "amount": 1800,
+    "deliveryDays": 8,
+    "note": "1234 0 - Can i work on your project please accept me",
+    "status": "pending",
+    "createdBy": "user_2",
+    "createdAt": "2026-10-19T17:30:27.216Z"
   }
 ]

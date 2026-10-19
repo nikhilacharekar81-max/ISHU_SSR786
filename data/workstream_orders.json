@@ -1,5 +1,39 @@
 [
   {
+    "id": "ord_d9e1eb22-ce1",
+    "workspaceId": "ws_69ce6ecd-23c",
+    "orderType": "project",
+    "title": "Custom LLM Prompt Engineering for Legal Document Analysis",
+    "buyerId": "user_4",
+    "sellerId": "user_2",
+    "amount": 1800,
+    "status": "funded_in_escrow",
+    "createdAt": "2026-10-19",
+    "dueDate": "2026-10-27",
+    "escrowProtectionStartDate": "2026-10-19",
+    "escrowProtectionEndDate": "2026-11-02",
+    "projectId": "proj_9",
+    "proposalId": "prop_1792430969158_3rqw",
+    "feeBreakdown": {
+      "gigPrice": 1800,
+      "serviceFee": 99,
+      "smallOrderFee": 0,
+      "clientTotal": 1899,
+      "platformCommission": 360,
+      "freelancerNet": 1440,
+      "freelancerPercent": 80,
+      "platformRevenue": 459,
+      "cents": {
+        "gigPrice": 180000,
+        "serviceFee": 9900,
+        "smallOrderFee": 0,
+        "clientTotal": 189900,
+        "platformCommission": 36000,
+        "freelancerNet": 144000
+      }
+    }
+  },
+  {
     "id": "ord_94ad79f8-8ba",
     "title": "Inquiry: I will design a complete Figma UI/UX design system and brand kit",
     "buyerId": "user_1",

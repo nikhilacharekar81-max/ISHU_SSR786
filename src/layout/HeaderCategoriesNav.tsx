@@ -155,18 +155,7 @@ export const HeaderCategoriesNav: React.FC<HeaderCategoriesNavProps> = ({
   currentCategory
 }) => {
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const handleMouseEnter = (slug: string) => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    setActiveCategory(slug);
-  };
-
-  const handleMouseLeave = () => {
-    timeoutRef.current = setTimeout(() => {
-      setActiveCategory(null);
-    }, 150);
-  };
 
   return (
     <nav className="relative z-40 bg-white border-b border-slate-200/80 shadow-2xs text-xs">
@@ -182,8 +171,6 @@ export const HeaderCategoriesNav: React.FC<HeaderCategoriesNavProps> = ({
               <div 
                 key={cat.slug} 
                 className="relative shrink-0"
-                onMouseEnter={() => handleMouseEnter(cat.slug)}
-                onMouseLeave={handleMouseLeave}
               >
                 <button
                   type="button"
@@ -230,7 +217,6 @@ export const HeaderCategoriesNav: React.FC<HeaderCategoriesNavProps> = ({
                           href={`/categories/${cat.slug}`}
                           onClick={(e) => {
                             e.preventDefault();
-                            if (timeoutRef.current) clearTimeout(timeoutRef.current);
                             setActiveCategory(null);
                             navigate(`/categories/${cat.slug}`, e);
                           }}

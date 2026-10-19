@@ -1029,7 +1029,7 @@ function checkWsIpRateLimit(ip: string): boolean {
 
 
 
-const server = createServer(app);
+export const server = createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (request, socket, head) => {
@@ -1590,6 +1590,7 @@ const REFUNDS_FILE = path.join(DATA_DIR, 'workstream_refunds.json');
 const DISPUTES_FILE = path.join(DATA_DIR, 'workstream_disputes.json');
 const PROPOSALS_FILE = path.join(DATA_DIR, 'workstream_proposals.json');
 const PAYOUTS_FILE = path.join(DATA_DIR, 'workstream_payouts.json');
+const PROJECTS_FILE = path.join(DATA_DIR, 'workstream_projects.json');
 const UPLOAD_INDEX_FILE = path.join(DATA_DIR, 'workstream_uploads.json'); // Added for completeness
 
 function ensureDataDirectory() {
@@ -1627,6 +1628,7 @@ export function saveRefundsToDisk() { writeJsonAtomic(REFUNDS_FILE, refunds); }
 export function saveDisputesToDisk() { writeJsonAtomic(DISPUTES_FILE, disputes); }
 export function saveProposalsToDisk() { writeJsonAtomic(PROPOSALS_FILE, proposals); }
 export function savePayoutsToDisk() { writeJsonAtomic(PAYOUTS_FILE, payouts); }
+export function saveProjectsToDisk() { writeJsonAtomic(PROJECTS_FILE, projects); }
 export function saveWorkstreamUploadIndex() { writeJsonAtomic(WORKSTREAM_UPLOAD_INDEX_FILE, workstreamUploadIndex); }
 
 function handleCorruption(filePath: string, error: any) {
@@ -1805,6 +1807,21 @@ function loadInitialOrdersAndMessages() {
       console.error('Failed to load proposals file:', e);
     }
   }
+
+  // 8. Load Projects
+  if (fs.existsSync(PROJECTS_FILE)) {
+    try {
+      const data = fs.readFileSync(PROJECTS_FILE, 'utf-8');
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const parsedIds = new Set(parsed.map((p: any) => p.id));
+        projects = [...parsed, ...SEED_PROJECTS.filter(p => !parsedIds.has(p.id))];
+      }
+    } catch (e) {
+      console.error('Failed to load projects file:', e);
+    }
+  }
+  saveProjectsToDisk();
 
   // 7. Load Payouts
   if (fs.existsSync(PAYOUTS_FILE)) {
@@ -2532,8 +2549,7 @@ function enrichProposalWithWorkstream(p: Proposal): Proposal {
   let workstreamOrderId = p.workstreamOrderId;
   let offerId = p.offerId;
   if (!workstreamOrderId) {
-    const matchedOrder = orders.find(o => o.proposalId === p.id) ||
-      orders.find(o => o.projectId === p.projectId && o.sellerId === p.freelancerId && !['cancelled'].includes(o.status));
+    const matchedOrder = orders.find(o => o.proposalId === p.id);
     if (matchedOrder) workstreamOrderId = matchedOrder.id;
   }
   if (!offerId && workstreamOrderId) {
@@ -5586,6 +5602,7 @@ app.post('/api/projects', requireAuth, (req, res) => {
     featured: false
   };
   projects.unshift(newProj);
+  saveProjectsToDisk();
   res.json(newProj);
 });
 
@@ -5609,6 +5626,7 @@ app.patch('/api/projects/:id/status', requireAuth, (req, res) => {
 
   const oldStatus = p.status;
   p.status = requestedStatus as Project['status'];
+  saveProjectsToDisk();
 
   registerAuditLog({
     id: 'log_' + Date.now(),
@@ -5644,6 +5662,8 @@ app.patch('/api/admin/projects/:id', requireAdmin, (req, res) => {
   if (req.body.moderationStatus !== undefined) p.moderationStatus = req.body.moderationStatus;
   if (req.body.moderationNotes !== undefined) p.moderationNotes = req.body.moderationNotes;
 
+  saveProjectsToDisk();
+
   registerAuditLog({
     id: 'log_' + Date.now(),
     actor: 'Admin Chief',
@@ -5663,6 +5683,7 @@ app.patch('/api/admin/projects/:id/status', requireAdmin, (req, res) => {
 
   const oldStatus = p.status;
   p.status = req.body.status;
+  saveProjectsToDisk();
 
   registerAuditLog({
     id: 'log_' + Date.now(),
@@ -5682,6 +5703,7 @@ app.patch('/api/admin/projects/:id/feature', requireAdmin, (req, res) => {
   if (!p) return res.status(404).json({ error: 'Project not found' });
 
   p.featured = !p.featured;
+  saveProjectsToDisk();
 
   registerAuditLog({
     id: 'log_' + Date.now(),
@@ -5702,6 +5724,7 @@ app.delete('/api/admin/projects/:id', requireAdmin, (req, res) => {
 
   const deleted = projects[index];
   projects.splice(index, 1);
+  saveProjectsToDisk();
 
   registerAuditLog({
     id: 'log_' + Date.now(),
@@ -5915,13 +5938,8 @@ function openProjectChat(project: any, freelancer: any, proposal: Proposal): str
 
     // Each accepted proposal / freelancer engagement has its own independent Order & Workstream.
     // Only reuse an existing unfunded inquiry order for this specific (project, buyer, freelancer) if one has not yet been funded.
-    let order: Order | undefined = orders.find(o =>
-      o.projectId === project.id &&
-      o.buyerId === owner.id &&
-      o.sellerId === freelancer.id &&
-      o.status === 'in_progress' &&
-      !orderHasEscrow(o.id) &&
-      (!o.proposalId || o.proposalId === proposal.id));
+    let order: Order | undefined = (proposal.workstreamOrderId ? orders.find(o => o.id === proposal.workstreamOrderId) : undefined) ||
+      orders.find(o => o.proposalId === proposal.id);
     if (!order) {
       const created: Order = {
         id: 'ord_' + randomUUID().slice(0, 12),
@@ -6019,26 +6037,27 @@ app.post('/api/proposals', requireAuth, (req, res) => {
   };
   proposals.unshift(newProp);
   proj.proposalsCount += 1;
+  saveProjectsToDisk();
   saveProposalsToDisk();
   res.json(newProp);
 });
 
 
 
-app.post('/api/proposals/:id/accept', requireAuth, (req, res) => {
+function processProposalAccept(req: any, res: any) {
   const proposalId = req.params.id;
   const proposal = proposals.find(p => p.id === proposalId);
   if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
   const proj = projects.find(p => p.id === proposal.projectId);
   if (!proj) return res.status(404).json({ error: 'Project not found' });
 
-  // Use a project-level lock to ensure atomicity for proposal acceptance
-  acquireOrderLock(proj.id);
+  // Use a proposal-level lock to ensure atomicity for this specific proposal acceptance
+  acquireOrderLock(proposal.id);
   try {
     const authUserId = (req as any).authenticatedUserId;
-    const caller = users.find(u => u.id === authUserId);
+    const caller = (req as any).authenticatedUser || users.find((u: any) => u.id === authUserId);
     if (!caller || caller.status !== 'active') return res.status(403).json({ error: 'Authentication required' });
-    if (proj.buyerId !== caller.id) return res.status(403).json({ error: 'Forbidden' });
+    if (proj.buyerId !== caller.id) return res.status(403).json({ error: 'Forbidden: Only the project buyer can accept proposals.' });
     if (proposal.status !== 'pending') return res.status(409).json({ error: `Proposal is already ${proposal.status}.` });
 
     ensureWallet(proj.buyerId);
@@ -6057,7 +6076,7 @@ app.post('/api/proposals/:id/accept', requireAuth, (req, res) => {
     const deliveryDays = proposal.deliveryDays || 7;
     const dueDate = new Date(Date.now() + deliveryDays * 86400000).toISOString().split('T')[0];
 
-    // Create Order object (do not record yet)
+    // Create Order object
     const order = {
       id: orderId,
       workspaceId: workspace.workspaceId,
@@ -6094,20 +6113,48 @@ app.post('/api/proposals/:id/accept', requireAuth, (req, res) => {
     workstreamOffers.push(offer);
     saveOffersToDisk();
     
-    // Register and fund
+    // Register order in memory for message attachment
     recordOrder(order);
     saveOrdersToDisk();
     emitSystemEvent(order.id, 'order_created', `Order placed: ${order.title}. Payment is held in escrow until the work is approved.`);
     postOfferMessage(order, offer, null, `Proposal ${offer.number} was created.`, 'offer_created');
 
-    fundOrderEscrowWithEvent({
-      orderId: order.id,
-      orderTitle: order.title,
-      amount: order.amount,
-      buyerId: order.buyerId,
-      sellerId: order.sellerId,
-      actor: `user:${order.buyerId}`
-    });
+    // Attempt financial ledger funding with transactional rollback on failure
+    try {
+      fundOrderEscrowWithEvent({
+        orderId: order.id,
+        orderTitle: order.title,
+        amount: order.amount,
+        buyerId: order.buyerId,
+        sellerId: order.sellerId,
+        actor: `user:${order.buyerId}`
+      });
+    } catch (fundingErr: any) {
+      // Rollback memory and disk state if funding fails (e.g. insufficient wallet balance)
+      const orderIdx = orders.findIndex(o => o.id === order.id);
+      if (orderIdx !== -1) orders.splice(orderIdx, 1);
+      orderIndex.delete(order.id);
+
+      const offerIdx = workstreamOffers.findIndex(o => o.id === offer.id);
+      if (offerIdx !== -1) workstreamOffers.splice(offerIdx, 1);
+
+      for (let i = workstreamMessages.length - 1; i >= 0; i--) {
+        if (workstreamMessages[i].orderId === order.id) {
+          workstreamMessages.splice(i, 1);
+        }
+      }
+
+      proposal.status = 'pending';
+      delete proposal.workstreamOrderId;
+      delete proposal.offerId;
+
+      saveOrdersToDisk();
+      saveOffersToDisk();
+      saveProposalsToDisk();
+      saveMessagesToDisk();
+
+      return res.status(400).json({ error: fundingErr.message || 'Failed to fund escrow for proposal.' });
+    }
 
     proposal.status = 'accepted';
     proposal.workstreamOrderId = order.id;
@@ -6123,34 +6170,51 @@ app.post('/api/proposals/:id/accept', requireAuth, (req, res) => {
     
     postOfferMessage(order, offer, null, `Proposal ${offer.number} was accepted and escrow funded ($${order.amount}).`, 'offer_accepted');
 
-    res.json({ success: true, proposal, order: enrichOrderWithServiceInfo(order), workspace, offer: viewOffer(offer) });
+    res.json({ success: true, proposal: enrichProposalWithWorkstream(proposal), order: enrichOrderWithServiceInfo(order), workspace, offer: viewOffer(offer) });
   } finally {
-    releaseOrderLock(proj.id);
+    releaseOrderLock(proposal.id);
   }
-});
+}
 
-app.post('/api/proposals/:id/decline', requireAuth, (req, res) => {
+function processProposalDecline(req: any, res: any) {
   const proposalId = req.params.id;
   const proposal = proposals.find(p => p.id === proposalId);
   if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
   const proj = projects.find(p => p.id === proposal.projectId);
   if (!proj) return res.status(404).json({ error: 'Project not found' });
 
-  acquireOrderLock(proj.id);
+  acquireOrderLock(proposal.id);
   try {
     const authUserId = (req as any).authenticatedUserId;
-    const caller = users.find(u => u.id === authUserId);
+    const caller = (req as any).authenticatedUser || users.find((u: any) => u.id === authUserId);
     if (!caller || caller.status !== 'active') return res.status(403).json({ error: 'Authentication required' });
-    if (proj.buyerId !== caller.id) return res.status(403).json({ error: 'Forbidden' });
+    if (proj.buyerId !== caller.id) return res.status(403).json({ error: 'Forbidden: Only the project buyer can decline proposals.' });
     if (proposal.status !== 'pending') return res.status(409).json({ error: `Proposal is already ${proposal.status}.` });
 
     proposal.status = 'rejected';
     saveProposalsToDisk();
-    res.json({ success: true, proposal });
+
+    // If an offer existed, mark it as declined
+    const offer = workstreamOffers.find(of => of.proposalId === proposal.id || of.id === proposal.offerId);
+    if (offer && offer.status === 'pending') {
+      offer.status = 'declined';
+      offer.resolvedAt = new Date().toISOString();
+      offer.resolvedBy = caller.id;
+      saveOffersToDisk();
+      const order = orders.find(o => o.id === offer.orderId);
+      if (order) {
+        postOfferMessage(order, offer, null, `${offer.number} was declined by the buyer.`, 'offer_declined');
+      }
+    }
+
+    res.json({ success: true, proposal: enrichProposalWithWorkstream(proposal), offer: offer ? viewOffer(offer) : undefined });
   } finally {
-    releaseOrderLock(proj.id);
+    releaseOrderLock(proposal.id);
   }
-});
+}
+
+app.post('/api/proposals/:id/accept', requireAuth, rateLimit(20, 60_000), (req, res) => processProposalAccept(req, res));
+app.post('/api/proposals/:id/decline', requireAuth, rateLimit(20, 60_000), (req, res) => processProposalDecline(req, res));
 
 app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
   try {
@@ -6215,8 +6279,25 @@ app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
     saveOrdersToDisk();
 
     if (!isInquiry) {
-      fundOrderEscrowWithEvent({ orderId: id, orderTitle: title, amount: rawAmount, buyerId, sellerId, actor: `user:${buyerId}` });
-      syncUserBalances();
+      try {
+        fundOrderEscrowWithEvent({ orderId: id, orderTitle: title, amount: rawAmount, buyerId, sellerId, actor: `user:${buyerId}` });
+        syncUserBalances();
+      } catch (fundingErr: any) {
+        // Rollback memory and disk state if escrow funding fails (e.g. insufficient wallet balance)
+        const orderIdx = orders.findIndex(o => o.id === id);
+        if (orderIdx !== -1) orders.splice(orderIdx, 1);
+        orderIndex.delete(id);
+
+        for (let i = workstreamMessages.length - 1; i >= 0; i--) {
+          if (workstreamMessages[i].orderId === id) {
+            workstreamMessages.splice(i, 1);
+          }
+        }
+
+        saveOrdersToDisk();
+        saveMessagesToDisk();
+        return res.status(400).json({ error: fundingErr.message || 'Failed to fund escrow. Order creation rolled back.' });
+      }
     }
     if (isInquiry) {
       emitSystemEvent(newOrd.id, 'order_created', `Inquiry thread opened: ${title}.`);
@@ -6307,8 +6388,7 @@ function findLinkedProposalForOffer(offer: WorkstreamOffer, order: Order): Propo
   return proposals.find(p =>
     (offer.proposalId && p.id === offer.proposalId) ||
     p.offerId === offer.id ||
-    (order.proposalId && p.id === order.proposalId) ||
-    (order.projectId && p.projectId === order.projectId && p.freelancerId === order.sellerId && p.status === 'pending')
+    (order.proposalId && p.id === order.proposalId)
   );
 }
 
@@ -6689,18 +6769,39 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
         gigId: order.gigId
       };
 
-      fundOrderEscrowWithEvent({
-        orderId: newOrder.id,
-        orderTitle: newOrder.title,
-        amount: newOrder.amount,
-        buyerId: newOrder.buyerId,
-        sellerId: newOrder.sellerId,
-        actor: `user:${newOrder.buyerId}`
-      });
-
+      // 1. Record & save order FIRST so it exists in memory / index for system event attachment
       const enrichedOrder = enrichOrderWithServiceInfo(newOrder);
       recordOrder(enrichedOrder);
       saveOrdersToDisk();
+      emitSystemEvent(newOrder.id, 'order_created', `Order placed: ${newOrder.title}. Payment is held in escrow until the work is approved.`);
+
+      // 2. Fund escrow with rollback on failure
+      try {
+        fundOrderEscrowWithEvent({
+          orderId: newOrder.id,
+          orderTitle: newOrder.title,
+          amount: newOrder.amount,
+          buyerId: newOrder.buyerId,
+          sellerId: newOrder.sellerId,
+          actor: `user:${newOrder.buyerId}`
+        });
+        syncUserBalances();
+      } catch (fundingErr: any) {
+        // Rollback newOrder state if funding fails
+        const orderIdx = orders.findIndex(o => o.id === newOrder.id);
+        if (orderIdx !== -1) orders.splice(orderIdx, 1);
+        orderIndex.delete(newOrder.id);
+
+        for (let i = workstreamMessages.length - 1; i >= 0; i--) {
+          if (workstreamMessages[i].orderId === newOrder.id) {
+            workstreamMessages.splice(i, 1);
+          }
+        }
+
+        saveOrdersToDisk();
+        saveMessagesToDisk();
+        return res.status(400).json({ error: fundingErr.message || 'Failed to fund escrow for follow-on order.' });
+      }
 
       offer.orderId = newOrder.id;
       offer.status = 'accepted';
@@ -6750,139 +6851,8 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
 
 // Direct Buyer Proposal Accept / Decline Endpoint (supports hiring multiple freelancers on the same project)
 app.post('/api/proposals/:id/:action(accept|decline)', requireAuth, rateLimit(20, 60_000), (req, res) => {
-  const proposal = proposals.find(p => p.id === req.params.id);
-  if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
-
-  const project = projects.find(p => p.id === proposal.projectId);
-  if (!project) return res.status(404).json({ error: 'Project not found' });
-
-  const caller = offerCaller(req);
-  if (!caller || caller.status !== 'active') return res.status(403).json({ error: 'Account is not active' });
-  if (caller.id !== project.buyerId) {
-    return res.status(403).json({ error: 'Only the project buyer can accept or decline proposals.' });
-  }
-
-  const freelancer = users.find(u => u.id === proposal.freelancerId);
-  if (!freelancer || freelancer.status !== 'active') {
-    return res.status(400).json({ error: 'Freelancer account is not active.' });
-  }
-
-  const action = req.params.action as 'accept' | 'decline';
-  const now = new Date().toISOString();
-
-  // Ensure an independent Order and WorkstreamOffer exist for this specific proposal
-  let order = (proposal.workstreamOrderId ? orders.find(o => o.id === proposal.workstreamOrderId) : undefined) ||
-    orders.find(o => o.proposalId === proposal.id) ||
-    orders.find(o => o.projectId === project.id && o.buyerId === project.buyerId && o.sellerId === freelancer.id && o.status === 'in_progress' && !orderHasEscrow(o.id));
-
-  if (!order && action === 'accept') {
-    const workstreamOrderId = openProjectChat(project, freelancer, proposal);
-    if (workstreamOrderId) {
-      order = orders.find(o => o.id === workstreamOrderId);
-    }
-  }
-
-  let offer = (proposal.offerId ? workstreamOffers.find(of => of.id === proposal.offerId) : undefined) ||
-    workstreamOffers.find(of => of.proposalId === proposal.id) ||
-    (order ? workstreamOffers.find(of => of.orderId === order!.id && of.kind === 'proposal' && of.status === 'pending') : undefined);
-
-  if (action === 'decline') {
-    if (proposal.status === 'accepted') {
-      return res.status(409).json({ error: 'Cannot decline a proposal that has already been accepted and funded.' });
-    }
-    proposal.status = 'rejected';
-    saveProposalsToDisk();
-    if (offer && offer.status === 'pending' && order) {
-      offer.status = 'declined';
-      offer.resolvedAt = now;
-      offer.resolvedBy = caller.id;
-      saveOffersToDisk();
-      postOfferMessage(order, offer, null, `${offer.number} was declined by the buyer.`, 'offer_declined');
-    }
-    return res.json({ proposal: enrichProposalWithWorkstream(proposal), offer: offer ? viewOffer(offer) : undefined });
-  }
-
-  // ----- accept: create/fund independent Workstream Order for this Freelancer in USD -----
-  if (proposal.status === 'accepted' && order && orderHasEscrow(order.id)) {
-    return res.status(409).json({ error: 'This proposal has already been accepted and funded.' });
-  }
-  if (!order) {
-    return res.status(400).json({ error: 'Could not initialize workstream order for this proposal.' });
-  }
-
-  acquireOrderLock(order.id);
-  try {
-    ensureWallet(order.buyerId);
-    ensureWallet(order.sellerId);
-    const today = now.split('T')[0];
-    const protectionEnd = new Date(Date.now() + siteSettings.getSettings().commission.escrowProtectionDays * 86400000).toISOString().split('T')[0];
-
-    if (!offer) {
-      offer = {
-        id: 'off_' + randomUUID().slice(0, 12),
-        number: `PRP-${String(workstreamOffers.filter(o => o.kind === 'proposal').length + 1001)}`,
-        orderId: order.id,
-        proposalId: proposal.id,
-        kind: 'proposal',
-        title: project.title,
-        amount: proposal.bidAmount,
-        deliveryDays: proposal.deliveryDays,
-        note: proposal.coverLetter ? proposal.coverLetter.slice(0, 1000) : undefined,
-        status: 'pending',
-        createdBy: freelancer.id,
-        createdAt: now
-      };
-      workstreamOffers.push(offer);
-    }
-
-    const amountUsd = Number(proposal.bidAmount);
-    if (!orderHasEscrow(order.id)) {
-      fundOrderEscrowWithEvent({
-        orderId: order.id,
-        orderTitle: project.title,
-        amount: amountUsd,
-        buyerId: order.buyerId,
-        sellerId: order.sellerId,
-        actor: `user:${order.buyerId}`
-      });
-      order.title = project.title;
-      order.amount = amountUsd;
-      order.status = 'funded_in_escrow';
-      order.projectId = project.id;
-      order.proposalId = proposal.id;
-      order.escrowProtectionStartDate = today;
-      order.escrowProtectionEndDate = protectionEnd;
-      order.feeBreakdown = financeLedger.quoteOrder(amountUsd);
-      if (proposal.deliveryDays) {
-        order.dueDate = new Date(Date.now() + proposal.deliveryDays * 86400000).toISOString().split('T')[0];
-      }
-      offer.status = 'accepted';
-      offer.resolvedAt = now;
-      offer.resolvedBy = caller.id;
-      proposal.status = 'accepted';
-      proposal.workstreamOrderId = order.id;
-      proposal.offerId = offer.id;
-      postOfferMessage(order, offer, null, `${offer.number} was accepted and escrow was funded ($${amountUsd}).`, 'offer_accepted');
-    } else {
-      return res.status(409).json({ error: 'Escrow is already funded for this proposal workstream.' });
-    }
-
-    syncUserBalances();
-    saveOrdersToDisk();
-    saveOffersToDisk();
-    saveProposalsToDisk();
-
-    return res.json({
-      proposal: enrichProposalWithWorkstream(proposal),
-      offer: viewOffer(offer),
-      order: enrichOrderWithServiceInfo(order),
-      workstreamOrderId: order.id
-    });
-  } catch (err: any) {
-    return res.status(400).json({ error: err.message });
-  } finally {
-    releaseOrderLock(order.id);
-  }
+  if (req.params.action === 'accept') return processProposalAccept(req, res);
+  return processProposalDecline(req, res);
 });
 
 app.patch('/api/admin/proposals/:id', requireAdmin, (req, res) => {
@@ -6938,6 +6908,7 @@ app.delete('/api/admin/proposals/:id', requireAdmin, (req, res) => {
   const proj = projects.find(p => p.id === deleted.projectId);
   if (proj && proj.proposalsCount > 0) {
     proj.proposalsCount -= 1;
+    saveProjectsToDisk();
   }
 
   registerAuditLog({
@@ -7101,6 +7072,7 @@ app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
   // Clean up listings to maintain references
   gigs = gigs.filter(g => g.freelancerId !== req.params.id);
   projects = projects.filter(p => p.buyerId !== req.params.id);
+  saveProjectsToDisk();
 
   const admin = (req as any).authenticatedUser;
   registerAuditLog({
@@ -7407,12 +7379,21 @@ app.get('/sitemap.xml', (_req, res) => {
   const portArgIndex = process.argv.findIndex(arg => arg === '--port' || arg === '-p');
   const cliPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? Number(process.argv[portArgIndex + 1]) : null;
   const PORT = cliPort || (process.env.PORT && process.env.PORT !== '8080' ? Number(process.env.PORT) : 3000);
-  server.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`WorkPerHour server running on http://0.0.0.0:${PORT}`);
-    if (bootstrapAdminPasswordNotice) {
-      console.warn('[SECURITY] ADMIN_INITIAL_PASSWORD was not set. One-time generated super-admin password: ' + bootstrapAdminPasswordNotice + ' — change it after first login and set ADMIN_INITIAL_PASSWORD next time.');
-    }
-  });
+  if (!server.listening) {
+    server.on('error', (err: any) => {
+      if (err.code === 'EADDRINUSE') {
+        console.warn(`Port ${PORT} in use, selecting dynamic fallback port`);
+        server.listen(0, '0.0.0.0');
+      }
+    });
+    server.listen(Number(PORT), '0.0.0.0', () => {
+      const actualPort = (server.address() as any)?.port || PORT;
+      console.log(`WorkPerHour server running on http://0.0.0.0:${actualPort}`);
+      if (bootstrapAdminPasswordNotice) {
+        console.warn('[SECURITY] ADMIN_INITIAL_PASSWORD was not set. One-time generated super-admin password: ' + bootstrapAdminPasswordNotice + ' — change it after first login and set ADMIN_INITIAL_PASSWORD next time.');
+      }
+    });
+  }
 })();
 
 // Graceful shutdown

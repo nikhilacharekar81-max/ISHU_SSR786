@@ -78,29 +78,42 @@ class WorkspaceService {
     if (order.workspaceId) {
       return this.workspaces.get(order.workspaceId);
     }
-    // Fallback search by origin or activeOrderId
+    // Search strictly by activeOrderId or exact project origin
     for (const w of this.workspaces.values()) {
       if (w.activeOrderId === orderId) return w;
+      if (order.projectId && w.originType === 'project' && w.originId === order.projectId && w.buyerId === order.buyerId && w.sellerId === order.sellerId) {
+        return w;
+      }
     }
     return undefined;
   }
 
   public ensureWorkspaceForOrder(order: Order): Workspace {
+    // 1. Explicit workspaceId: reuse it
     if (order.workspaceId && this.workspaces.has(order.workspaceId)) {
       return this.workspaces.get(order.workspaceId)!;
     }
-    // Check if workspace exists for origin
+
     const originType = order.projectId ? 'project' : 'gig';
     const originId = order.projectId || order.gigId || order.id;
 
-    // For gig orders, public gig purchases create independent workspaces UNLESS follow-on work in same workspace
-    let existing = Array.from(this.workspaces.values()).find(w => 
-      w.buyerId === order.buyerId && 
-      w.sellerId === order.sellerId && 
-      w.status === 'active' &&
-      (order.workspaceId ? w.workspaceId === order.workspaceId : false)
-    );
+    // 2. Exact Origin Match: If this order belongs to a specific Project where a Workspace was already created for this exact project and buyer/seller
+    let existing: Workspace | undefined;
+    if (order.projectId) {
+      existing = Array.from(this.workspaces.values()).find(w =>
+        w.buyerId === order.buyerId &&
+        w.sellerId === order.sellerId &&
+        w.originType === 'project' &&
+        w.originId === order.projectId
+      );
+    }
 
+    // 3. Active Order Match: If a workspace explicitly lists this order as its activeOrderId
+    if (!existing) {
+      existing = Array.from(this.workspaces.values()).find(w => w.activeOrderId === order.id);
+    }
+
+    // 4. If no exact/known relationship match exists, create a new dedicated Workspace (never guess based on generic buyer+seller alone)
     if (!existing) {
       existing = this.createWorkspace({
         buyerId: order.buyerId,
@@ -112,7 +125,9 @@ class WorkspaceService {
     }
 
     order.workspaceId = existing.workspaceId;
-    existing.activeOrderId = order.id;
+    if (!existing.activeOrderId) {
+      existing.activeOrderId = order.id;
+    }
     this.saveToDisk();
     return existing;
   }
@@ -127,7 +142,7 @@ class WorkspaceService {
           const ws = this.ensureWorkspaceForOrder(o);
           details.push(`Migrated order ${o.id} to workspace ${ws.workspaceId}`);
         } else {
-          details.push(`[DryRun] Would migrate order ${o.id} to new workspace for buyer ${o.buyerId} & seller ${o.sellerId}`);
+          details.push(`[DryRun] Would migrate order ${o.id} to workspace for buyer ${o.buyerId} & seller ${o.sellerId}`);
         }
       }
     }

@@ -55,11 +55,16 @@ export function sanitizePublicGig(g: Gig) {
   return publicGig;
 }
 
+const PUBLIC_PROJECT_STATUSES = new Set(['open', 'published', 'in_progress']);
+
 export function isProjectPublic(p: Project): boolean {
   if (!p || typeof p !== 'object') return false;
   const status = (p.status || '').toLowerCase();
-  if (status === 'draft' || status === 'deleted' || status === 'cancelled') return false;
-  if (p.moderationStatus === 'rejected' || p.moderationStatus === 'flagged') return false;
+  if (!PUBLIC_PROJECT_STATUSES.has(status)) return false;
+
+  const modStatus = (p.moderationStatus || '').toLowerCase();
+  if (modStatus === 'pending' || modStatus === 'rejected' || modStatus === 'flagged') return false;
+
   return true;
 }
 

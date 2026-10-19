@@ -1,5 +1,31 @@
 [
   {
+    "id": "prop_1792430969158_3rqw",
+    "projectId": "proj_9",
+    "freelancerId": "user_2",
+    "freelancerName": "Elena Rostova",
+    "freelancerAvatar": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&h=400&fit=crop",
+    "freelancerTitle": "Principal UI/UX & Design Systems Lead",
+    "coverLetter": "1234 0 - Can i work on your project please accept me",
+    "bidAmount": 1800,
+    "deliveryDays": 8,
+    "createdAt": "2026-10-19",
+    "status": "pending"
+  },
+  {
+    "id": "prop_1792430538527_jjvg",
+    "projectId": "proj_9",
+    "freelancerId": "user_2",
+    "freelancerName": "Elena Rostova",
+    "freelancerAvatar": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&h=400&fit=crop",
+    "freelancerTitle": "Principal UI/UX & Design Systems Lead",
+    "coverLetter": "can i wprk on your project",
+    "bidAmount": 1800,
+    "deliveryDays": 8,
+    "createdAt": "2026-10-19",
+    "status": "rejected"
+  },
+  {
     "id": "prop_1792421661811_icph",
     "projectId": "proj_9",
     "freelancerId": "user_3",
@@ -36,7 +62,7 @@
     "bidAmount": 1800,
     "deliveryDays": 8,
     "createdAt": "2026-10-19",
-    "status": "pending"
+    "status": "rejected"
   },
   {
     "id": "prop_6_1",

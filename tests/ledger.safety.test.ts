@@ -21,17 +21,19 @@ function run() {
 
   // --- double release ---
   e = new FinanceLedgerEngine();
+  e.creditDeposit({ userId: 'user_2', amount: 1000, reference: 'TEST-DEP', idempotencyKey: 'DEP-SAFETY-1', actor: 'a' });
   e.fundEscrow({ orderId: 'o1', orderTitle: 't', amount: 100, buyerId: 'user_2', sellerId: 'user_3', actor: 'a' });
   e.releaseEscrow({ orderId: 'o1', actor: 'a' });
   const afterFirst = bal(e, 'user_3');
   throws(() => e.releaseEscrow({ orderId: 'o1', actor: 'a' }), 'Second release of the same order is rejected', 'already released');
   throws(() => e.releaseEscrow({ orderId: 'o1', actor: 'a' }), 'Third release is rejected too');
-  assert(bal(e, 'user_3') === afterFirst && afterFirst === 90, 'Freelancer credited exactly once ($90)', String(bal(e, 'user_3')));
+  assert(bal(e, 'user_3') === afterFirst && afterFirst === 80, 'Freelancer credited exactly once ($80)', String(bal(e, 'user_3')));
   throws(() => e.refundEscrow({ orderId: 'o1', reason: 'too late refund', actor: 'a' }), 'Refund after release is rejected', 'already released');
   assert(invariantsOk(e), 'Invariants hold after release attempts');
 
   // --- double refund / refund then release ---
   e = new FinanceLedgerEngine();
+  e.creditDeposit({ userId: 'user_2', amount: 1000, reference: 'TEST-DEP', idempotencyKey: 'DEP-SAFETY-2', actor: 'a' });
   const b0 = bal(e, 'user_2');
   e.fundEscrow({ orderId: 'o2', orderTitle: 't', amount: 100, buyerId: 'user_2', sellerId: 'user_3', actor: 'a' });
   e.refundEscrow({ orderId: 'o2', reason: 'buyer cancelled', actor: 'a' });
@@ -42,10 +44,11 @@ function run() {
 
   // --- refund cap and partial split ---
   e = new FinanceLedgerEngine();
+  e.creditDeposit({ userId: 'user_2', amount: 1000, reference: 'TEST-DEP', idempotencyKey: 'DEP-SAFETY-3', actor: 'a' });
   e.fundEscrow({ orderId: 'o3', orderTitle: 't', amount: 200, buyerId: 'user_2', sellerId: 'user_3', actor: 'a' });
   throws(() => e.refundEscrow({ orderId: 'o3', amount: 250, reason: 'over refund', actor: 'a' }), 'Refund above escrow held is rejected', 'exceeds');
   const split = e.resolveEscrowSplit({ orderId: 'o3', refundAmount: 50, reason: 'partial scope delivered', actor: 'a' });
-  assert(split.release.freelancerNet === 135 && split.release.platformFee === 15, 'Split: remainder $150 -> $135 seller, $15 fee');
+  assert(split.release.freelancerNet === 120 && split.release.platformFee === 30, 'Split: remainder $150 -> $120 seller, $30 fee');
   assert(e.getEscrow('o3')?.status === 'split' && e.getEscrow('o3')?.remaining === 0, 'Escrow fully resolved after split');
   assert(invariantsOk(e), 'Invariants hold after split');
 
@@ -58,6 +61,7 @@ function run() {
     throws(() => e.fundEscrow({ orderId: 'ob' + String(bad), orderTitle: 't', amount: bad, buyerId: 'user_2', sellerId: 'user_3', actor: 'a' }), `Invalid amount ${String(bad)} is rejected`);
   }
   throws(() => e.fundEscrow({ orderId: 'o6', orderTitle: 't', amount: 5, buyerId: 'user_2', sellerId: 'user_3', actor: 'a' }), 'Below minimum order amount is rejected', 'Minimum order');
+  e.creditDeposit({ userId: 'user_2', amount: 1000, reference: 'TEST-DEP', idempotencyKey: 'DEP-SAFETY-4', actor: 'a' });
   e.fundEscrow({ orderId: 'o7', orderTitle: 't', amount: 20, buyerId: 'user_2', sellerId: 'user_3', actor: 'a' });
   throws(() => e.fundEscrow({ orderId: 'o7', orderTitle: 't', amount: 20, buyerId: 'user_2', sellerId: 'user_3', actor: 'a' }), 'Funding the same order twice is rejected', 'already funded');
   throws(() => e.releaseEscrow({ orderId: 'never_funded', actor: 'a' }), 'Releasing an order that was never funded is rejected', 'No funded escrow');
@@ -71,6 +75,7 @@ function run() {
 
   // --- freezes are enforced ---
   e = new FinanceLedgerEngine();
+  e.creditDeposit({ userId: 'user_2', amount: 1000, reference: 'TEST-DEP', idempotencyKey: 'DEP-SAFETY-5', actor: 'a' });
   e.fundEscrow({ orderId: 'f1', orderTitle: 't', amount: 100, buyerId: 'user_2', sellerId: 'user_3', actor: 'a' });
   e.freezeWallet('user_3', 'fraud investigation', 'a');
   throws(() => e.releaseEscrow({ orderId: 'f1', actor: 'a' }), 'Release to a frozen seller wallet is blocked', 'frozen');
@@ -81,6 +86,7 @@ function run() {
 
   // --- payouts ---
   e = new FinanceLedgerEngine();
+  e.creditDeposit({ userId: 'user_1', amount: 3675, reference: 'SEED-DEP-USER1', idempotencyKey: 'SEED-U1', actor: 'a' });
   const e0 = bal(e, 'user_1'); // 3675
   throws(() => e.requestPayout({ payoutId: 'p0', freelancerId: 'user_1', amount: 10, method: 'UPI', accountDetails: 'x@upi', actor: 'a' }), 'Withdrawal below minimum is rejected', 'Minimum withdrawal');
   throws(() => e.requestPayout({ payoutId: 'p0', freelancerId: 'user_1', amount: 99999, method: 'UPI', accountDetails: 'x@upi', actor: 'a' }), 'Withdrawal above maximum is rejected');
@@ -109,10 +115,11 @@ function run() {
 
   // --- reversal rules ---
   e = new FinanceLedgerEngine();
+  e.creditDeposit({ userId: 'user_2', amount: 1000, reference: 'TEST-DEP', idempotencyKey: 'DEP-SAFETY-6', actor: 'a' });
   e.fundEscrow({ orderId: 'r1', orderTitle: 't', amount: 100, buyerId: 'user_2', sellerId: 'user_3', actor: 'a' });
   const fundJournal = e.getJournals().find(j => j.eventType === 'ORDER_ESCROW_FUNDED' && j.entries.some(x => x.orderId === 'r1'))!;
   throws(() => e.reverseJournal(fundJournal.id, 'trying to reverse escrow', 'a'), 'Escrow journals cannot be reversed directly', 'cannot be reversed');
-  const dep = e.getJournals().find(j => j.reference === 'DEP-STRIPE-89320')!;
+  const dep = e.getJournals().find(j => j.reference === 'TEST-DEP')!;
   throws(() => e.reverseJournal(dep.id, 'reverse a spent deposit', 'a'), 'Reversing a deposit that would overdraw a wallet is rejected', 'overdraw');
   const adj = e.executeAdministrativeAdjustment({ userId: 'user_3', amount: 40, direction: 'credit_user', category: 'goodwill', reason: 'goodwill credit test', actor: 'a' });
   const rev = e.reverseJournal(adj.journal.id, 'duplicate goodwill credit', 'a');
@@ -122,6 +129,7 @@ function run() {
 
   // --- commission follows settings ---
   e = new FinanceLedgerEngine();
+  e.creditDeposit({ userId: 'user_2', amount: 1000, reference: 'TEST-DEP', idempotencyKey: 'DEP-SAFETY-7', actor: 'a' });
   e.setPlatformCommissionRate(15);
   e.fundEscrow({ orderId: 'c1', orderTitle: 't', amount: 200, buyerId: 'user_2', sellerId: 'user_3', actor: 'a' });
   const rel = e.releaseEscrow({ orderId: 'c1', actor: 'a' });
@@ -133,6 +141,7 @@ function run() {
   e.creditDeposit({ userId: 'user_3', amount: 75, reference: 'gw-1', idempotencyKey: 'evt_123', actor: 'gw' });
   const again = e.creditDeposit({ userId: 'user_3', amount: 75, reference: 'gw-1', idempotencyKey: 'evt_123', actor: 'gw' });
   assert(again.replayed && bal(e, 'user_3') === w0 + 75, 'Replayed gateway event credits the wallet only once');
+  e.creditDeposit({ userId: 'user_2', amount: 1000, reference: 'TEST-DEP', idempotencyKey: 'DEP-SAFETY-8', actor: 'a' });
   e.fundEscrow({ orderId: 'i1', orderTitle: 't', amount: 100, buyerId: 'user_2', sellerId: 'user_3', actor: 'a' });
   const r1 = e.releaseEscrow({ orderId: 'i1', actor: 'a', requestKey: 'req-1' });
   const r2 = e.releaseEscrow({ orderId: 'i1', actor: 'a', requestKey: 'req-1' });

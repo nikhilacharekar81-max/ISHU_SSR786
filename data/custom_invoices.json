@@ -1,0 +1,26 @@
+[
+  {
+    "id": "inv_1792431498105",
+    "invoiceNumber": "INV-498105",
+    "userId": "user_1",
+    "recipientName": "Client",
+    "recipientEmail": "client@example.com",
+    "title": "Test",
+    "issueDate": "2026-10-19",
+    "dueDate": "2026-11-02",
+    "status": "unpaid",
+    "items": [
+      {
+        "description": "Test",
+        "quantity": 1,
+        "unitPrice": 100,
+        "amount": 100
+      }
+    ],
+    "subtotal": 100,
+    "platformFee": 0,
+    "tax": 0,
+    "total": 100,
+    "notes": "Standard WorkPerHour Invoice"
+  }
+]
