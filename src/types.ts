@@ -122,8 +122,34 @@ export interface DeliveryRecord {
   deliveredAt: string;
 }
 
+export interface Workspace {
+  workspaceId: string;
+  buyerId: string;
+  sellerId: string;
+  originType: 'gig' | 'project';
+  originId: string;
+  createdAt: string;
+  status: 'active' | 'archived';
+  activeOrderId?: string;
+}
+
+export interface GigOrder extends Order {
+  gigOrderId: string;
+  workspaceId: string;
+  gigId: string;
+}
+
+export interface ProjectOrder extends Order {
+  projectOrderId: string;
+  workspaceId: string;
+  projectId: string;
+  proposalId?: string;
+}
+
 export interface Order {
   id: string;
+  workspaceId?: string;
+  orderType?: 'gig' | 'project';
   title: string;
   buyerId: string;
   sellerId: string;

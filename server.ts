@@ -10,6 +10,7 @@ import { randomUUID, randomBytes, randomInt, timingSafeEqual, createHmac } from 
 import bcrypt from 'bcryptjs';
 import type { Request, Response, NextFunction } from 'express';
 import { financeLedger, FinanceLedgerEngine } from './src/server/financeLedger.js';
+import { workspaceService } from './src/server/workspaceService.js';
 import { siteSettings, DEFAULT_SITE_SETTINGS } from './src/server/siteSettings.js';
 import { paymentGatewayManager } from './src/server/paymentGateways.js';
 import { sanitizePublicUser, isUserPublic, sanitizePublicGig, sanitizePublicProject, isGigPublic, isProjectPublic } from './server/publicData.js';
@@ -1674,6 +1675,7 @@ function registerMessage(m: Message) {
 }
 
 function recordOrder(o: Order) {
+  workspaceService.ensureWorkspaceForOrder(o);
   orders.unshift(o);
   registerOrder(o);
 }

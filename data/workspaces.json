@@ -1,0 +1,29 @@
+[
+  {
+    "workspaceId": "ws_bbf063a3-7d0",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_2",
+    "createdAt": "2026-10-19",
+    "status": "active"
+  },
+  {
+    "workspaceId": "ws_6ca2e767-0c9",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_2",
+    "createdAt": "2026-10-19",
+    "status": "active"
+  },
+  {
+    "workspaceId": "ws_85b7fff6-58f",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_10",
+    "createdAt": "2026-10-19",
+    "status": "active"
+  }
+]

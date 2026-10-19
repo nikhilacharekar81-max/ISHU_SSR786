@@ -193,5 +193,95 @@
     "text": "Thanks Liam! Lighthouse scan finished. Working on Schema metadata and high DA backlinks now.",
     "timestamp": "2026-03-26T15:45:00.000Z",
     "type": "message"
+  },
+  {
+    "id": "msg_1792414842017_4dvv",
+    "orderId": "ord_auto_expired_1792414841990",
+    "senderId": "system",
+    "senderName": "WorkSphere System",
+    "text": "🎉 Escrow funds ($200) released to seller! Workstream marked as completed.",
+    "timestamp": "2026-10-19T13:00:42.017Z",
+    "type": "system",
+    "metadata": {
+      "amount": 200,
+      "freelancerNet": 160,
+      "platformFee": 40,
+      "orderCompleted": true,
+      "action": "escrow_released"
+    }
+  },
+  {
+    "id": "msg_1792414841990_vbrd",
+    "orderId": "ord_auto_expired_1792414841990",
+    "senderId": "system",
+    "senderName": "WorkSphere Review Desk",
+    "text": "🎉 Order #ord_auto_expired_1792414841990 automatically accepted: Buyer review window (3 days) closed without revisions or dispute. Escrow funds released to seller.",
+    "timestamp": "2026-10-19T13:00:41.990Z",
+    "type": "system",
+    "metadata": {
+      "action": "order_auto_accepted",
+      "acceptedVersion": 1,
+      "reviewWindowDays": 3
+    }
+  },
+  {
+    "id": "msg_1792414842033_27td",
+    "orderId": "ord_custom_window_1792414841990",
+    "senderId": "system",
+    "senderName": "WorkSphere System",
+    "text": "🎉 Escrow funds ($120) released to seller! Workstream marked as completed.",
+    "timestamp": "2026-10-19T13:00:42.033Z",
+    "type": "system",
+    "metadata": {
+      "amount": 120,
+      "freelancerNet": 96,
+      "platformFee": 24,
+      "orderCompleted": true,
+      "action": "escrow_released"
+    }
+  },
+  {
+    "id": "msg_1792587641990_9vgz",
+    "orderId": "ord_custom_window_1792414841990",
+    "senderId": "system",
+    "senderName": "WorkSphere Review Desk",
+    "text": "🎉 Order #ord_custom_window_1792414841990 automatically accepted: Buyer review window (5 days) closed without revisions or dispute. Escrow funds released to seller.",
+    "timestamp": "2026-10-21T13:00:41.990Z",
+    "type": "system",
+    "metadata": {
+      "action": "order_auto_accepted",
+      "acceptedVersion": 1,
+      "reviewWindowDays": 5
+    }
+  },
+  {
+    "id": "msg_1792414938400_xwvl",
+    "orderId": "ord_auto_disputed_1792414841990",
+    "senderId": "system",
+    "senderName": "WorkSphere System",
+    "text": "🎉 Escrow funds ($120) released to seller! Workstream marked as completed.",
+    "timestamp": "2026-10-19T13:02:18.400Z",
+    "type": "system",
+    "metadata": {
+      "amount": 120,
+      "freelancerNet": 96,
+      "platformFee": 24,
+      "orderCompleted": true,
+      "action": "escrow_released"
+    }
+  },
+  {
+    "id": "msg_1792414938394_m8dr",
+    "orderId": "ord_auto_disputed_1792414841990",
+    "senderId": "system",
+    "senderName": "WorkSphere Review Desk",
+    "text": "🎉 Order #ord_auto_disputed_1792414841990 automatically accepted: Buyer review window (3 days) closed without revisions or dispute. Escrow funds released to seller.",
+    "timestamp": "2026-10-19T13:02:18.394Z",
+    "type": "system",
+    "metadata": {
+      "action": "order_auto_accepted",
+      "acceptedVersion": 1,
+      "reviewWindowDays": 3
+    }
   }
 ]
