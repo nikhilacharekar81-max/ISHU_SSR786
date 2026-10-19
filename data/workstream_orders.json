@@ -26,7 +26,8 @@
     "buyerUsername": "alex_rivera",
     "serviceTitle": "Need React & Node.js Developer to build Escrow Payment Dashboard",
     "serviceThumbnail": "https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=800&h=500&fit=crop",
-    "serviceUrl": "/project/need-react-and-nodejs-developer-to-build-escrow-payment-dashboard"
+    "serviceUrl": "/project/need-react-and-nodejs-developer-to-build-escrow-payment-dashboard",
+    "workspaceId": "ws_a10e187f-ff8"
   },
   {
     "id": "ord_102",
@@ -55,7 +56,8 @@
     "buyerUsername": "sophia_chen",
     "serviceTitle": "Figma Design System for B2B Analytics Platform",
     "serviceThumbnail": "https://images.unsplash.com/photo-1561070791-2526d30994b5?w=800&h=500&fit=crop",
-    "serviceUrl": "/project/figma-design-system-for-b2b-analytics-platform"
+    "serviceUrl": "/project/figma-design-system-for-b2b-analytics-platform",
+    "workspaceId": "ws_ec9bc102-857"
   },
   {
     "id": "ord_103",
@@ -85,7 +87,8 @@
     "buyerUsername": "david_miller",
     "serviceTitle": "I will build custom AI agents and ChatGPT API workflows for your product",
     "serviceThumbnail": "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&h=500&fit=crop",
-    "serviceUrl": "/marcus_vance/i-will-build-custom-ai-agents-and-chatgpt-api-workflows-for-your-product"
+    "serviceUrl": "/marcus_vance/i-will-build-custom-ai-agents-and-chatgpt-api-workflows-for-your-product",
+    "workspaceId": "ws_57aae211-bb5"
   },
   {
     "id": "ord_104",
@@ -104,7 +107,8 @@
     "buyerUsername": "priya_sharma",
     "serviceTitle": "React Native Mobile Banking App for Fintech Startup",
     "serviceThumbnail": "https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?w=800&h=500&fit=crop",
-    "serviceUrl": "/project/react-native-mobile-banking-app-for-fintech-startup"
+    "serviceUrl": "/project/react-native-mobile-banking-app-for-fintech-startup",
+    "workspaceId": "ws_589dd7b4-0e8"
   },
   {
     "id": "ord_105",
@@ -124,7 +128,8 @@
     "buyerUsername": "liam_oconnor",
     "serviceTitle": "I will deliver a technical SEO audit and high DA link building campaign",
     "serviceThumbnail": "https://images.unsplash.com/photo-1432888622747-4eb9a8efeb07?w=800&h=500&fit=crop",
-    "serviceUrl": "/sophia_chen/i-will-deliver-a-technical-seo-audit-and-high-da-link-building-campaign"
+    "serviceUrl": "/sophia_chen/i-will-deliver-a-technical-seo-audit-and-high-da-link-building-campaign",
+    "workspaceId": "ws_06ce3558-b36"
   },
   {
     "id": "ord_auto_pending_1792414841990",
@@ -155,7 +160,8 @@
         "size": "1 MB",
         "url": "/uploads/workstream/test1.pdf"
       }
-    ]
+    ],
+    "workspaceId": "ws_a89bfda2-a37"
   },
   {
     "id": "ord_auto_expired_1792414841990",
@@ -188,7 +194,8 @@
       }
     ],
     "completedAt": "2026-10-19T13:00:42.003Z",
-    "acceptedVersion": 1
+    "acceptedVersion": 1,
+    "workspaceId": "ws_5e4ceb47-1c3"
   },
   {
     "id": "ord_auto_revised_1792414841990",
@@ -216,7 +223,8 @@
         "status": "requested",
         "deliveryVersion": 1
       }
-    ]
+    ],
+    "workspaceId": "ws_0b6047ff-a7a"
   },
   {
     "id": "ord_auto_disputed_1792414841990",
@@ -236,7 +244,8 @@
       }
     ],
     "completedAt": "2026-10-19T13:02:18.397Z",
-    "acceptedVersion": 1
+    "acceptedVersion": 1,
+    "workspaceId": "ws_ece866ad-37d"
   },
   {
     "id": "ord_custom_window_1792414841990",
@@ -256,6 +265,7 @@
       }
     ],
     "completedAt": "2026-10-19T13:00:42.032Z",
-    "acceptedVersion": 1
+    "acceptedVersion": 1,
+    "workspaceId": "ws_75046c74-2c3"
   }
 ]

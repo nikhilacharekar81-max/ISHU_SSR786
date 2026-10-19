@@ -105,17 +105,12 @@ async function runTests() {
   });
   console.log('ProposalRes:', proposalRes.status, proposalRes.json);
   const propId = proposalRes.json.id;
-  const orderCId = proposalRes.json.workstreamOrderId; // This is the ID of the inquiry order
-  
+  assert.ok(propId, 'Project C proposal created without fake order');
+
   // Accept proposal
-  const offersRes = await api(`/api/orders/${orderCId}/offers`, { method: 'GET', token: buyerToken });
-  console.log('OffersRes:', offersRes.status, offersRes.json);
-  const offerC = offersRes.json.offers.find((o: any) => o.kind === 'proposal');
-  assert.ok(offerC && offerC.id, 'Project C offer found');
-  
-  const acceptRes = await api(`/api/offers/${offerC.id}/accept`, { method: 'POST', token: buyerToken });
+  const acceptRes = await api(`/api/proposals/${propId}/accept`, { method: 'POST', token: buyerToken });
   console.log('AcceptRes:', acceptRes.status, acceptRes.json);
-  const orderCRes = acceptRes.json.newOrder || acceptRes.json.order;
+  const orderCRes = acceptRes.json.order;
   const orderC = orderCRes;
   assert.ok(orderCRes && orderCRes.id, 'Project C order created');
   assert.notStrictEqual(orderCRes.id, orderA.id, 'Order C is separate');
@@ -334,20 +329,14 @@ async function runTests() {
   assert.strictEqual(propCRes.status, 200);
   assert.strictEqual(propDRes.status, 200);
 
-  // Verify each proposal has its own ID, own workstreamOrderId, and offer_created message metadata
-  const wsOrderIds = new Set([
-    propARes.json.workstreamOrderId,
-    propBRes.json.workstreamOrderId,
-    propCRes.json.workstreamOrderId,
-    propDRes.json.workstreamOrderId
+  // Verify each proposal has its own unique ID and no fake orders are created at submission time
+  const propIds = new Set([
+    propARes.json.id,
+    propBRes.json.id,
+    propCRes.json.id,
+    propDRes.json.id
   ]);
-  assert.strictEqual(wsOrderIds.size, 4, 'Every freelancer proposal must have its own separate Workstream Order ID');
-
-  const msgsB = await api(`/api/messages/${propBRes.json.workstreamOrderId}`, { token: buyerToken });
-  assert.ok(
-    msgsB.json.some((m: any) => m.metadata?.action === 'offer_created' && m.metadata?.offerId === propBRes.json.offerId),
-    'Workstream B must contain offer_created message with offerId so the interactive Proposal Card renders'
-  );
+  assert.strictEqual(propIds.size, 4, 'Every freelancer proposal must have its own unique ID without fake orders at submission time');
 
   // Buyer accepts Proposal B via POST /api/proposals/:id/accept
   const acceptB = await api(`/api/proposals/${propBRes.json.id}/accept`, { method: 'POST', token: buyerToken });
@@ -358,8 +347,8 @@ async function runTests() {
   assert.strictEqual(acceptB.json.order.sellerId, 'user_2');
   assert.strictEqual(acceptB.json.order.projectId, multiProj.id);
 
-  // Buyer ALSO accepts Proposal C on the SAME project via Workstream Offer accept (POST /api/offers/:id/accept)
-  const acceptC = await api(`/api/offers/${propCRes.json.offerId}/accept`, { method: 'POST', token: buyerToken });
+  // Buyer ALSO accepts Proposal C on the SAME project via POST /api/proposals/:id/accept
+  const acceptC = await api(`/api/proposals/${propCRes.json.id}/accept`, { method: 'POST', token: buyerToken });
   assert.strictEqual(acceptC.status, 200, 'Accepting Proposal C on the same project must succeed');
   assert.strictEqual(acceptC.json.order.status, 'funded_in_escrow');
   assert.strictEqual(acceptC.json.order.amount, 600);

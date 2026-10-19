@@ -1719,6 +1719,14 @@ function loadInitialOrdersAndMessages() {
     orders.forEach(registerOrder);
   }
 
+  // Run safe, idempotent legacy workspace migration on startup
+  const migrationRes = workspaceService.migrateLegacyOrders(orders, false);
+  if (migrationRes.migratedCount > 0) {
+    console.log(`[WorkspaceMigration] Migrated ${migrationRes.migratedCount} legacy orders to Workspaces on startup.`);
+    saveOrdersToDisk();
+    workspaceService.saveToDisk();
+  }
+
   // 2. Load Messages
   if (fs.existsSync(MESSAGES_FILE)) {
     try {
@@ -6008,9 +6016,128 @@ app.post('/api/proposals', requireAuth, (req, res) => {
   };
   proposals.unshift(newProp);
   proj.proposalsCount += 1;
-  const workstreamOrderId = openProjectChat(proj, caller, newProp);
   saveProposalsToDisk();
-  res.json({ ...newProp, workstreamOrderId, offerId: newProp.offerId });
+  res.json(newProp);
+});
+
+app.post('/api/proposals/:id/accept', requireAuth, (req, res) => {
+  const proposalId = req.params.id;
+  const proposal = proposals.find(p => p.id === proposalId);
+  if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+
+  const proj = projects.find(p => p.id === proposal.projectId);
+  if (!proj) return res.status(404).json({ error: 'Project not found' });
+
+  const authUserId = (req as any).authenticatedUserId;
+  const caller = users.find(u => u.id === authUserId);
+  if (!caller || caller.status !== 'active') return res.status(403).json({ error: 'Authentication required' });
+  if (proj.buyerId !== caller.id) {
+    return res.status(403).json({ error: 'Forbidden: Only the project owner (buyer) can accept this proposal.' });
+  }
+  if (proposal.status !== 'pending') {
+    return res.status(409).json({ error: `Proposal is already ${proposal.status}.` });
+  }
+
+  ensureWallet(proj.buyerId);
+  ensureWallet(proposal.freelancerId);
+
+  // Create Workspace
+  const workspace = workspaceService.createWorkspace({
+    buyerId: proj.buyerId,
+    sellerId: proposal.freelancerId,
+    originType: 'project',
+    originId: proj.id
+  });
+
+  const orderId = 'ord_' + randomUUID().slice(0, 12);
+  const today = new Date().toISOString().split('T')[0];
+  const protectionDays = siteSettings.getSettings().commission.escrowProtectionDays;
+  const deliveryDays = proposal.deliveryDays || 7;
+  const dueDate = new Date(Date.now() + deliveryDays * 86400000).toISOString().split('T')[0];
+
+  const order = {
+    id: orderId,
+    workspaceId: workspace.workspaceId,
+    orderType: 'project',
+    title: proj.title,
+    buyerId: proj.buyerId,
+    sellerId: proposal.freelancerId,
+    amount: proposal.bidAmount,
+    status: 'funded_in_escrow' as const,
+    createdAt: today,
+    dueDate,
+    escrowProtectionStartDate: today,
+    escrowProtectionEndDate: new Date(Date.now() + protectionDays * 86400000).toISOString().split('T')[0],
+    projectId: proj.id,
+    proposalId: proposal.id,
+    feeBreakdown: financeLedger.quoteOrder(proposal.bidAmount)
+  };
+
+  fundOrderEscrowWithEvent({
+    orderId: order.id,
+    orderTitle: order.title,
+    amount: order.amount,
+    buyerId: order.buyerId,
+    sellerId: order.sellerId,
+    actor: `user:${order.buyerId}`
+  });
+
+  recordOrder(order);
+  saveOrdersToDisk();
+
+  proposal.status = 'accepted';
+  proposal.workstreamOrderId = order.id;
+  saveProposalsToDisk();
+
+  syncUserBalances();
+
+  emitSystemEvent(order.id, 'proposal_accepted', `Proposal accepted and escrow funded ($${order.amount}). Workstream workspace & escrow vault opened.`);
+
+  const offer: WorkstreamOffer = {
+    id: 'off_' + randomUUID().slice(0, 12),
+    number: `PRP-${String(workstreamOffers.filter(o => o.kind === 'proposal').length + 1001)}`,
+    orderId: order.id,
+    proposalId: proposal.id,
+    kind: 'proposal',
+    title: proj.title,
+    amount: proposal.bidAmount,
+    deliveryDays: proposal.deliveryDays,
+    note: proposal.coverLetter ? proposal.coverLetter.slice(0, 1000) : undefined,
+    status: 'accepted',
+    createdBy: proposal.freelancerId,
+    createdAt: new Date().toISOString(),
+    resolvedAt: new Date().toISOString(),
+    resolvedBy: caller.id
+  };
+  workstreamOffers.push(offer);
+  saveOffersToDisk();
+  proposal.offerId = offer.id;
+  saveProposalsToDisk();
+
+  res.json({ success: true, proposal, order: enrichOrderWithServiceInfo(order), workspace, offer: viewOffer(offer) });
+});
+
+app.post('/api/proposals/:id/decline', requireAuth, (req, res) => {
+  const proposalId = req.params.id;
+  const proposal = proposals.find(p => p.id === proposalId);
+  if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+
+  const proj = projects.find(p => p.id === proposal.projectId);
+  if (!proj) return res.status(404).json({ error: 'Project not found' });
+
+  const authUserId = (req as any).authenticatedUserId;
+  const caller = users.find(u => u.id === authUserId);
+  if (!caller || caller.status !== 'active') return res.status(403).json({ error: 'Authentication required' });
+  if (proj.buyerId !== caller.id) {
+    return res.status(403).json({ error: 'Forbidden: Only the project owner (buyer) can decline this proposal.' });
+  }
+  if (proposal.status !== 'pending') {
+    return res.status(409).json({ error: `Proposal is already ${proposal.status}.` });
+  }
+
+  proposal.status = 'rejected';
+  saveProposalsToDisk();
+  res.json({ success: true, proposal });
 });
 
 app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
