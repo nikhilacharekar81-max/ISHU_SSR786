@@ -18,7 +18,13 @@ export function useWorkstreamDelivery({
   setMessages
 }: UseWorkstreamDeliveryProps) {
 
-  const handleDeliverWork = async (delivery: { notes: string; reference?: string; files: Array<{ name: string; size: string; url: string }> }): Promise<boolean> => {
+  const handleDeliverWork = async (delivery: {
+    notes: string;
+    reference?: string;
+    files: Array<{ name: string; size: string; url: string }>;
+    invoiceTitle?: string;
+    invoiceAmount?: number;
+  }): Promise<boolean> => {
     if (!selectedOrder) return false;
 
     try {
@@ -32,15 +38,17 @@ export function useWorkstreamDelivery({
         body: JSON.stringify({
           notes: delivery.notes,
           reference: delivery.reference,
-          files: delivery.files
+          files: delivery.files,
+          createInvoiceOffer: true,
+          invoiceTitle: delivery.invoiceTitle,
+          invoiceAmount: delivery.invoiceAmount
         })
       });
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         console.warn('Deliver work failed:', err);
-        alert(err.error || 'Failed to submit deliverables. Please check network connection.');
-        return false;
+        throw new Error(err.error || 'Failed to submit deliverables. Please check network connection.');
       }
 
       const data = await res.json();

@@ -35,7 +35,13 @@ interface WorkstreamWorkspaceProps {
   /** Called after a buyer accepts / pays an offer so the parent can refresh its order list. */
   onOrderChanged?: (order: any, newOrder?: any) => void;
   onReleaseEscrow: () => void | Promise<boolean>;
-  onDeliverWork: (delivery: { notes: string; files: Array<{ name: string; size: string; url: string }> }) => void;
+  onDeliverWork: (delivery: {
+    notes: string;
+    reference?: string;
+    files: Array<{ name: string; size: string; url: string }>;
+    invoiceTitle?: string;
+    invoiceAmount?: number;
+  }) => void;
   onRequestRevision: (reason: string) => void;
   onViewPartnerProfile?: (user: UserAccount) => void;
   onLogRequirement?: (requirementText: string) => void;
@@ -43,7 +49,7 @@ interface WorkstreamWorkspaceProps {
   onDisputeAssistance?: () => void;
   isReviewModalOpen: boolean;
   setIsReviewModalOpen: (open: boolean) => void;
-  handleSubmitReview: (review: { rating: number; comment: string; gigId?: string; projectId?: string }) => Promise<boolean>;
+  handleSubmitReview: (review: { rating: number; comment: string; gigId?: string; projectId?: string; reviewId?: string }) => Promise<boolean>;
   reviewError?: string | null;
   isSubmittingReview?: boolean;
   escrowError?: string | null;
@@ -81,82 +87,158 @@ export const WorkstreamWorkspace: React.FC<WorkstreamWorkspaceProps> = ({
   const [isDeliverModalOpen, setIsDeliverModalOpen] = useState(false);
   const [isRevisionModalOpen, setIsRevisionModalOpen] = useState(false);
   const [isVideoCallModalOpen, setIsVideoCallModalOpen] = useState(false);
+  const [isDisputeModalOpen, setIsDisputeModalOpen] = useState(false);
+  const [disputeReasonInput, setDisputeReasonInput] = useState('');
+  const [isSubmittingDispute, setIsSubmittingDispute] = useState(false);
+  const [disputeModalError, setDisputeModalError] = useState<string | null>(null);
 
   // Real proposals / invoices / deposit requests for this workstream (server is the source of truth)
   const lastMessageId = messages.length ? messages[messages.length - 1].id : '';
-  const { offers, currencySymbol, escrowFunded, createOffer, respond } = useWorkstreamOffers(order.id, lastMessageId);
-  const isSeller = !!currentUser && currentUser.id === order.sellerId;
-  const pendingInvoice = offers.find(o => o.kind === 'invoice' && o.status === 'pending');
-  const canSendProposal = isSeller && !pendingInvoice;
-  const canRaiseInvoice = isSeller && order.status === 'in_progress';
-  const proposalHint = !isSeller ? 'Only the seller can send this' : 'Cannot send proposal while an invoice is pending.';
-  const invoiceHint = !isSeller ? 'Only the seller can send this' : 'Invoices are for follow-on work.';
+  const {
+    offers,
+    currencySymbol,
+    escrowFunded,
+    escrowRemaining,
+    totalReleased,
+    hasPaidInvoice,
+    createOffer,
+    respond,
+    refundEscrow
+  } = useWorkstreamOffers(order.id, lastMessageId);
 
-  // When an offer is accepted/paid the order changes (escrow funded, or a new invoice order appears).
-  // The buyer's click already refreshes, but the seller only sees the system message, so refresh on it too.
+  const isSeller = !!currentUser && currentUser.id === order.sellerId;
+  const isBuyer = !!currentUser && currentUser.id === order.buyerId;
+  const pendingInvoice = offers.find(o => o.kind === 'invoice' && o.status === 'pending');
+  const pendingProposal = offers.find(o => o.kind === 'proposal' && o.status === 'pending');
+  const invoiceAlreadyPaid = hasPaidInvoice || Boolean((order as any).hasPaidInvoice) || offers.some(o => o.kind === 'invoice' && o.status === 'paid') || order.status === 'completed';
+  const activeEscrow = escrowRemaining > 0 ? escrowRemaining : (escrowFunded ? Number(order.amount || 0) : 0);
+
+  // PeoplePerHour Gig vs Project Proposal rules:
+  // - For Gigs: Seller CANNOT send a new proposal initially because the Gig is already pre-funded.
+  //   Once the first invoice is paid, Seller CAN send follow-on proposals in the same WorkStream!
+  // - For Projects: Seller can send a proposal when no active escrow/invoice is blocking, or after an invoice is paid.
+  const isGigInitiallyLocked = order.type === 'gig' && !invoiceAlreadyPaid;
+  const canSendProposal = isSeller
+    && order.status !== 'cancelled'
+    && !pendingInvoice
+    && !pendingProposal
+    && !isGigInitiallyLocked
+    && (!escrowFunded || invoiceAlreadyPaid);
+
+  const canRaiseInvoice = isSeller
+    && (escrowFunded || activeEscrow > 0)
+    && order.status !== 'cancelled'
+    && !pendingInvoice;
+
+  const proposalHint = !isSeller
+    ? 'Only the seller can send a proposal'
+    : isGigInitiallyLocked
+      ? 'This Gig is already funded in Escrow. Deliver the work and raise your first invoice — once it is paid, you can send follow-on proposals.'
+      : pendingInvoice
+        ? 'Cannot send a proposal while an invoice is awaiting payment.'
+        : pendingProposal
+          ? 'A proposal is already awaiting the buyer\'s response.'
+          : escrowFunded && !invoiceAlreadyPaid
+            ? 'Escrow is already funded for this stage. Raise an invoice to complete the current work first.'
+            : 'Send a custom proposal for additional scope.';
+
+  const invoiceHint = !isSeller
+    ? 'Only the seller can raise an invoice'
+    : pendingInvoice
+      ? 'An invoice is already awaiting buyer payment.'
+      : 'Invoices require an active funded Escrow deposit. Send a Proposal first so the buyer can fund Escrow.';
+
+  // Refresh parent order state when an offer or review or escrow action occurs in the stream
   const lastMessage = messages.length ? messages[messages.length - 1] : undefined;
   const handledOfferMsgRef = useRef<string>(lastMessageId);
   useEffect(() => {
     if (!lastMessage || lastMessage.id === handledOfferMsgRef.current) return;
     handledOfferMsgRef.current = lastMessage.id;
     const action = lastMessage.metadata?.action;
-    if (action && ['offer_accepted', 'offer_paid'].includes(action)) onOrderChanged?.(null);
+    if (action && ['offer_accepted', 'offer_paid', 'offer_declined', 'offer_cancelled', 'escrow_released', 'escrow_refunded', 'deliverable_submitted', 'dispute_opened', 'dispute_resolved', 'review_submitted', 'review_reply_submitted'].includes(action)) {
+      onOrderChanged?.(null);
+    }
   }, [lastMessage?.id]);
 
   const handleOfferAction = async (offerId: string, action: 'accept' | 'decline' | 'cancel') => {
     const result = await respond(offerId, action);
-    if (result.ok && (result.order || result.newOrder)) onOrderChanged?.(result.order, result.newOrder);
+    if (result.ok) onOrderChanged?.(result.order || null, result.newOrder);
     return result;
   };
 
-  const [errorInfo, setErrorInfo] = useState<{msg: string, retryAction: () => void} | null>(null);
+  const handleSellerRefundEscrow = async () => {
+    const result = await refundEscrow(order.id);
+    if (result.ok) onOrderChanged?.(result.order || null);
+    return result;
+  };
 
-  // Buyer review window countdown calculation
-  const latestDelivery = Array.isArray(order.deliveryHistory) && order.deliveryHistory.length > 0
-    ? order.deliveryHistory[order.deliveryHistory.length - 1]
-    : null;
-
-  const deliveredAt = latestDelivery?.deliveredAt;
-  const reviewDays = (order as any).reviewWindowDays || 3;
-  const expiresAtMs = (order as any).reviewWindowExpiresAt
-    ? new Date((order as any).reviewWindowExpiresAt).getTime()
-    : deliveredAt
-      ? new Date(deliveredAt).getTime() + reviewDays * 24 * 60 * 60 * 1000
-      : null;
-
-  const [remainingTimeStr, setRemainingTimeStr] = useState<string>('');
-
-  useEffect(() => {
-    if (!expiresAtMs || order.status !== 'delivered') {
-      setRemainingTimeStr('');
-      return;
+  const handleReplyReview = async (reviewId: string, replyText: string): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const token = getAuthToken();
+      const res = await fetch(`/api/reviews/${reviewId}/reply`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ text: replyText })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: data.error || 'Failed to post review reply.' };
+      onOrderChanged?.(null);
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Network error posting reply.' };
     }
+  };
 
-    const updateCountdown = () => {
-      const diff = expiresAtMs - Date.now();
-      if (diff <= 0) {
-        setRemainingTimeStr('Window closed (Auto-accepting...)');
-        return;
-      }
-      const totalSeconds = Math.floor(diff / 1000);
-      const days = Math.floor(totalSeconds / 86400);
-      const hours = Math.floor((totalSeconds % 86400) / 3600);
-      const minutes = Math.floor((totalSeconds % 3600) / 60);
-      const seconds = totalSeconds % 60;
-
-      if (days > 0) {
-        setRemainingTimeStr(`${days}d ${hours}h ${minutes}m left`);
-      } else if (hours > 0) {
-        setRemainingTimeStr(`${hours}h ${minutes}m ${seconds}s left`);
+  const handleSubmitDisputeModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!disputeReasonInput.trim()) return;
+    setIsSubmittingDispute(true);
+    setDisputeModalError(null);
+    try {
+      const token = getAuthToken();
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
+      if (escrowFunded || activeEscrow > 0) {
+        const res = await fetch('/api/disputes/open', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ orderId: order.id, reason: disputeReasonInput.trim() })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setDisputeModalError(data.error || 'Could not open dispute.');
+          setIsSubmittingDispute(false);
+          return;
+        }
+        if (data.order) onOrderChanged?.(data.order);
+        else onOrderChanged?.(null);
       } else {
-        setRemainingTimeStr(`${minutes}m ${seconds}s left`);
+        await fetch('/api/support-tickets', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            subject: `Workstream Support: ${order.title} (#${order.id})`,
+            text: disputeReasonInput.trim(),
+            priority: 'high'
+          })
+        });
+        sendEvent(order.id, `🚨 Support & Dispute Desk notified: "${disputeReasonInput.trim()}"`, 'system', { action: 'dispute_opened', reason: disputeReasonInput.trim() }, () => {});
       }
-    };
+      setDisputeReasonInput('');
+      setIsDisputeModalOpen(false);
+    } catch (err: any) {
+      setDisputeModalError(err?.message || 'Network error submitting dispute.');
+    } finally {
+      setIsSubmittingDispute(false);
+    }
+  };
 
-    updateCountdown();
-    const timer = setInterval(updateCountdown, 1000);
-    return () => clearInterval(timer);
-  }, [expiresAtMs, order.status]);
+  const [errorInfo, setErrorInfo] = useState<{msg: string, retryAction: () => void} | null>(null);
 
   const handleLogRequirement = (reqText: string) => {
     if (onLogRequirement) onLogRequirement(reqText);
@@ -180,23 +262,24 @@ export const WorkstreamWorkspace: React.FC<WorkstreamWorkspaceProps> = ({
 
   const handleDownloadFile = async (f: { name: string; url: string }) => {
     if (!f.url) {
-      alert(`"${f.name || 'This file'}" is unavailable: it has no valid download link.`);
+      setErrorInfo({ msg: `"${f.name || 'This file'}" has no valid download link.`, retryAction: () => setErrorInfo(null) });
       return;
     }
-    // User-provided links are never trusted: only uploaded files get the auth token, only http(s) opens a tab,
-    // everything else (javascript:, data:, free text...) stays plain text and is never navigated to or fetched.
     const link0 = classifyFileUrl(f.url);
     if (link0.kind === 'web') { openWebLink(link0.url); return; }
-    if (link0.kind === 'text') { alert(`${f.name || 'Deliverable'}:\n\n${link0.url}`); return; }
-    // Files are access-controlled, so fetch with the session token and save the blob.
+    if (link0.kind === 'text') {
+      setErrorInfo({ msg: `${f.name || 'Deliverable'}: ${link0.url}`, retryAction: () => setErrorInfo(null) });
+      return;
+    }
     try {
       const token = getAuthToken();
       const downloadUrl = f.url.includes('?') ? `${f.url}&download=1` : `${f.url}?download=1`;
       const res = await fetch(downloadUrl, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} });
       if (!res.ok) {
-        alert(res.status === 403
-          ? 'You do not have access to this file.'
-          : `"${f.name || 'This file'}" could not be downloaded (it may no longer be available).`);
+        setErrorInfo({
+          msg: res.status === 403 ? 'You do not have access to this file.' : `"${f.name || 'This file'}" could not be downloaded.`,
+          retryAction: () => setErrorInfo(null)
+        });
         return;
       }
       const blob = await res.blob();
@@ -210,42 +293,44 @@ export const WorkstreamWorkspace: React.FC<WorkstreamWorkspaceProps> = ({
       setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
     } catch (err) {
       console.error('File download failed:', err);
-      alert('Network error downloading the file. Please try again.');
+      setErrorInfo({ msg: 'Network error downloading the file. Please try again.', retryAction: () => setErrorInfo(null) });
     }
   };
 
   const getStatusBadge = () => {
-    switch (order.status) {
-      case 'completed':
-        return (
-          <span className="px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold uppercase rounded-full flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Completed</span>
-          </span>
-        );
-      case 'delivered':
-        return (
-          <span className="px-3 py-1 bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold uppercase rounded-full flex items-center gap-1.5">
-            <Clock className="w-3.5 h-3.5 text-amber-600" />
-            <span>Delivered · Awaiting Review</span>
-          </span>
-        );
-      case 'revision':
-        return (
-          <span className="px-3 py-1 bg-purple-50 text-purple-800 border border-purple-200 text-[10px] font-bold uppercase rounded-full flex items-center gap-1.5">
-            <RotateCcw className="w-3.5 h-3.5 text-purple-600" />
-            <span>Revision in Progress</span>
-          </span>
-        );
-      default:
-        return (
-          <span className="px-3 py-1 bg-blue-50 text-blue-800 border border-blue-200 text-[10px] font-bold uppercase rounded-full flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Escrow Protected (${order.amount})</span>
-          </span>
-        );
+    if (order.status === 'completed' && activeEscrow <= 0) {
+      return (
+        <span className="px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold uppercase rounded-full flex items-center gap-1.5">
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Invoice Paid • WorkStream Open</span>
+        </span>
+      );
     }
+    if (order.status === 'delivered' || pendingInvoice) {
+      return (
+        <span className="px-3 py-1 bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold uppercase rounded-full flex items-center gap-1.5">
+          <Clock className="w-3.5 h-3.5 text-amber-600" />
+          <span>Invoice Raised • Awaiting Buyer Payment</span>
+        </span>
+      );
+    }
+    if (order.status === 'revision') {
+      return (
+        <span className="px-3 py-1 bg-purple-50 text-purple-800 border border-purple-200 text-[10px] font-bold uppercase rounded-full flex items-center gap-1.5">
+          <RotateCcw className="w-3.5 h-3.5 text-purple-600" />
+          <span>Revision in Progress</span>
+        </span>
+      );
+    }
+    return (
+      <span className="px-3 py-1 bg-blue-50 text-blue-800 border border-blue-200 text-[10px] font-bold uppercase rounded-full flex items-center gap-1.5">
+        <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+        <span>In Escrow ({currencySymbol}{Number(activeEscrow || order.amount || 0).toLocaleString()})</span>
+      </span>
+    );
   };
+
+  const sellerReview = (order as any).sellerReview;
 
   return (
     <div className="space-y-6">
@@ -259,7 +344,7 @@ export const WorkstreamWorkspace: React.FC<WorkstreamWorkspaceProps> = ({
             onClick={() => { errorInfo.retryAction(); setErrorInfo(null); }}
             className="px-3 py-1 bg-rose-200 hover:bg-rose-300 text-rose-900 rounded-lg font-bold transition cursor-pointer"
           >
-            Retry
+            Dismiss
           </button>
         </div>
       )}
@@ -283,39 +368,54 @@ export const WorkstreamWorkspace: React.FC<WorkstreamWorkspaceProps> = ({
                 {getStatusBadge()}
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Order #{order.id} • Partner: <strong className="text-fiverr-dark font-medium">{partner?.name || 'Collaborator'}</strong>
+                WorkStream #{order.id} • Partner: <strong className="text-fiverr-dark font-medium">{partner?.name || 'Collaborator'}</strong>
+                {totalReleased > 0 && (
+                  <span className="ml-2 text-emerald-600 font-semibold">
+                    • Paid: {currencySymbol}{totalReleased.toLocaleString()}
+                  </span>
+                )}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {currentUser?.id === order.buyerId && order.status !== 'completed' && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {isBuyer && activeEscrow > 0 && (order.status === 'delivered' || !!pendingInvoice) && (
               <button
                 onClick={() => setIsReleaseModalOpen(true)}
                 className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
               >
                 <ShieldCheck className="w-4 h-4" />
-                <span>Release Escrow</span>
+                <span>{pendingInvoice ? `Pay Invoice (${pendingInvoice.number})` : 'Release Escrow'}</span>
               </button>
             )}
 
-            {currentUser?.id === order.buyerId && order.status === 'completed' && !order.review && (
+            {isBuyer && (invoiceAlreadyPaid || order.status === 'cancelled') && !order.review && (
               <button
                 onClick={() => setIsReviewModalOpen(true)}
                 className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
               >
                 <Star className="w-4 h-4 fill-white" />
-                <span>Write a Review</span>
+                <span>Review Seller</span>
               </button>
             )}
 
-            {currentUser?.id === order.sellerId && order.status !== 'completed' && (
+            {isSeller && (invoiceAlreadyPaid || order.status === 'cancelled') && !sellerReview && (
+              <button
+                onClick={() => setIsReviewModalOpen(true)}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
+              >
+                <Star className="w-4 h-4 fill-white" />
+                <span>Review Buyer</span>
+              </button>
+            )}
+
+            {isSeller && activeEscrow > 0 && order.status !== 'cancelled' && (
               <button
                 onClick={() => setIsDeliverModalOpen(true)}
                 className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-xs transition cursor-pointer"
               >
                 <Receipt className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Invoice</span>
+                <span>Raise Invoice & Deliver</span>
               </button>
             )}
           </div>
@@ -374,17 +474,31 @@ export const WorkstreamWorkspace: React.FC<WorkstreamWorkspaceProps> = ({
                     buyerId={order.buyerId}
                     sellerId={order.sellerId}
                     orderAmount={order.amount}
+                    escrowRemaining={activeEscrow}
+                    orderReview={order.review}
+                    sellerReview={sellerReview}
                     onOfferAction={handleOfferAction}
+                    onRequestRevisionFromInvoice={() => setIsRevisionModalOpen(true)}
+                    onReplyReview={handleReplyReview}
                     onRetryMessage={onRetryMessage}
                   />
                   <WorkstreamMessageInput
                     key={order.id}
+                    orderId={order.id}
+                    defaultInvoiceAmount={activeEscrow > 0 ? activeEscrow : Number(order.amount || 0)}
+                    defaultInvoiceTitle={`Invoice for ${order.title}`}
                     onSendMessage={onSendMessage}
                     onAttachFile={onAttachFile}
                     onStartVideoCall={() => setIsVideoCallModalOpen(true)}
-                    onCreateOffer={createOffer}
+                    onCreateOffer={async (input) => {
+                      const res = await createOffer(input);
+                      if (res.ok) onOrderChanged?.(res.order || null);
+                      return res;
+                    }}
+                    onRefundEscrow={isSeller && activeEscrow > 0 ? handleSellerRefundEscrow : undefined}
                     canSendProposal={canSendProposal}
                     canRaiseInvoice={canRaiseInvoice}
+                    canRefundEscrow={isSeller && activeEscrow > 0}
                     proposalHint={proposalHint}
                     invoiceHint={invoiceHint}
                     currencySymbol={currencySymbol}
@@ -408,19 +522,26 @@ export const WorkstreamWorkspace: React.FC<WorkstreamWorkspaceProps> = ({
             order={order}
             partner={partner}
             currentUser={currentUser}
+            escrowRemaining={activeEscrow}
+            totalReleased={totalReleased}
+            currencySymbol={currencySymbol}
             onViewPartnerProfile={onViewPartnerProfile}
           />
 
           <WorkstreamActionsPanel
             order={order}
             currentUser={currentUser}
+            pendingInvoice={pendingInvoice}
+            escrowRemaining={activeEscrow}
+            hasPaidInvoice={invoiceAlreadyPaid}
+            canSendProposal={canSendProposal}
             onOpenReleaseModal={() => setIsReleaseModalOpen(true)}
             onOpenDeliverModal={() => setIsDeliverModalOpen(true)}
             onOpenRevisionModal={() => setIsRevisionModalOpen(true)}
             onOpenReviewModal={() => setIsReviewModalOpen(true)}
             onStartVideoCall={() => setIsVideoCallModalOpen(true)}
             onAttachFiles={() => setActiveSubTab('files')}
-            onDisputeAssistance={onDisputeAssistance}
+            onDisputeAssistance={() => setIsDisputeModalOpen(true)}
           />
         </div>
       </div>
@@ -444,13 +565,21 @@ export const WorkstreamWorkspace: React.FC<WorkstreamWorkspaceProps> = ({
         pendingInvoice={pendingInvoice}
         error={escrowError}
         onClose={() => setIsReleaseModalOpen(false)}
-        onConfirm={async () => { return await onReleaseEscrow(); }}
+        onConfirm={async () => {
+          if (pendingInvoice) {
+            const res = await handleOfferAction(pendingInvoice.id, 'accept');
+            return res.ok;
+          }
+          return await onReleaseEscrow();
+        }}
       />
 
       <WorkstreamDeliverModal
         key={`deliver_${order.id}`}
         isOpen={isDeliverModalOpen}
         order={order}
+        escrowRemaining={activeEscrow}
+        currencySymbol={currencySymbol}
         onClose={() => setIsDeliverModalOpen(false)}
         onSubmitDelivery={onDeliverWork}
       />
@@ -467,11 +596,65 @@ export const WorkstreamWorkspace: React.FC<WorkstreamWorkspaceProps> = ({
         key={`review_${order.id}`}
         isOpen={isReviewModalOpen}
         order={order}
+        currentUserId={currentUser?.id}
+        partnerName={partner?.name}
         onClose={() => setIsReviewModalOpen(false)}
         onSubmitReview={handleSubmitReview}
         error={reviewError}
         isSubmitting={isSubmittingReview}
       />
+
+      {isDisputeModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-fiverr-dark flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-rose-600" />
+                <span>Escrow Dispute & Support Assistance</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => { setIsDisputeModalOpen(false); setDisputeModalError(null); }}
+                className="text-slate-400 hover:text-slate-600 text-sm font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Describe the issue with WorkStream #{order.id}. Our arbitration team will review your workstream history and assist both parties fairly.
+            </p>
+            <form onSubmit={handleSubmitDisputeModal} className="space-y-4">
+              <textarea
+                rows={4}
+                required
+                value={disputeReasonInput}
+                onChange={(e) => setDisputeReasonInput(e.target.value)}
+                placeholder="Explain the issue or reason for requesting arbitration..."
+                className="w-full px-3.5 py-2.5 rounded-2xl border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900"
+              />
+              {disputeModalError && (
+                <p className="text-xs text-rose-600 font-semibold">{disputeModalError}</p>
+              )}
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setIsDisputeModalOpen(false); setDisputeModalError(null); }}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingDispute || !disputeReasonInput.trim()}
+                  className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-bold cursor-pointer"
+                >
+                  {isSubmittingDispute ? 'Submitting...' : 'Submit to Arbitration Desk'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

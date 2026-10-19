@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { hydrateRoot } from 'react-dom/client';
+import { hydrateRoot, createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { installAuthFetch } from './utils/authToken';
@@ -18,8 +18,15 @@ installAuthFetch();
 
 const initialData = window.__INITIAL_DATA__;
 const initialPath = window.location.pathname;
+const rootElement = document.getElementById('root')!;
 
-hydrateRoot(
-  document.getElementById('root')!,
-  <App initialPath={initialPath} initialData={initialData} />
-);
+if (rootElement.hasChildNodes() && initialData) {
+  hydrateRoot(
+    rootElement,
+    <App initialPath={initialPath} initialData={initialData} />
+  );
+} else {
+  createRoot(rootElement).render(
+    <App initialPath={initialPath} initialData={initialData} />
+  );
+}

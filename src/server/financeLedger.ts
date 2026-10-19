@@ -175,6 +175,7 @@ export interface EscrowRecord {
   refundedTotal: number;
   releasedGross: number;
   refundSeq: number;
+  releaseSeq?: number;
   status: 'held' | 'released' | 'refunded' | 'split';
   fundedAt: string;
   commissionPercent: number; // commission rate locked in when the escrow was funded
@@ -719,6 +720,7 @@ export class FinanceLedgerEngine {
       refundedTotal: 0,
       releasedGross: 0,
       refundSeq: 0,
+      releaseSeq: 0,
       status: 'held',
       fundedAt: params.timestamp || nowStr(),
       commissionPercent: this.platformCommissionRate,
@@ -730,7 +732,7 @@ export class FinanceLedgerEngine {
     return { journal, escrow: this.escrows.get(params.orderId)!, fees };
   }
 
-  // Tops up an already funded escrow for an order with additional funds under the same orderId.
+  // Tops up an already funded escrow for an order with additional funds under the same orderId (including follow-on proposals after prior release).
   public topUpEscrow(params: { orderId: string; orderTitle: string; amount: number; buyerId: string; sellerId: string; actor: string; timestamp?: string; skipMinimum?: boolean }) {
     this.ensureOperational();
     if (!params.orderId) throw new Error('orderId is required.');
@@ -738,7 +740,7 @@ export class FinanceLedgerEngine {
     if (!esc) {
       return this.fundEscrow(params);
     }
-    if (esc.status !== 'held') throw new Error(`Escrow for order ${params.orderId} is not in held status (${esc.status}).`);
+    if (!['held', 'released', 'split'].includes(esc.status)) throw new Error(`Escrow for order ${params.orderId} cannot be topped up from status "${esc.status}".`);
     const amount = FinanceLedgerEngine.assertMoney(params.amount, 'Top-up amount');
     const buyer = this.requireWallet(params.buyerId);
     const seller = this.requireWallet(params.sellerId);
@@ -765,7 +767,7 @@ export class FinanceLedgerEngine {
       reference: `ORD-${params.orderId}-ESCROW-TOPUP-${Date.now()}`,
       description: `Escrow top-up for Order #${params.orderId} (${params.orderTitle})`,
       eventType: 'ORDER_ESCROW_TOPUP',
-      idempotencyKey: `IDEMP-ORD-TOPUP-${params.orderId}-${Date.now()}`,
+      idempotencyKey: `IDEMP-ORD-TOPUP-${params.orderId}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       actor: params.actor,
       timestamp: params.timestamp,
       entries: fundEntries
@@ -773,6 +775,7 @@ export class FinanceLedgerEngine {
     buyer.fundsOnHold = FinanceLedgerEngine.round(buyer.fundsOnHold + amount);
     esc.amount = FinanceLedgerEngine.round(esc.amount + amount);
     esc.remaining = FinanceLedgerEngine.round(esc.remaining + amount);
+    esc.status = 'held';
     esc.serviceFee = FinanceLedgerEngine.round(esc.serviceFee + fees.serviceFee);
     esc.smallOrderFee = FinanceLedgerEngine.round(esc.smallOrderFee + fees.smallOrderFee);
 
@@ -807,11 +810,15 @@ export class FinanceLedgerEngine {
     if (platformFee > 0) {
       entries.push({ accountCode: '4010', debit: 0, credit: platformFee, currency: DEFAULT_CURRENCY, description: `${commissionRate}% platform commission on Order #${params.orderId}`, orderId: params.orderId });
     }
+    const nextReleaseSeq = (esc.releaseSeq || 0) + 1;
+    const relIdempKey = nextReleaseSeq === 1 ? `IDEMP-REL-${params.orderId}` : `IDEMP-REL-${params.orderId}-${nextReleaseSeq}`;
+    const relRef = nextReleaseSeq === 1 ? `ORD-${params.orderId}-RELEASE` : `ORD-${params.orderId}-RELEASE-${nextReleaseSeq}`;
+
     const journal = this.postJournal({
-      reference: `ORD-${params.orderId}-RELEASE`,
+      reference: relRef,
       description: `Escrow release for Order #${params.orderId} (${esc.orderTitle})`,
       eventType: 'ESCROW_RELEASED_TO_FREELANCER',
-      idempotencyKey: `IDEMP-REL-${params.orderId}`,
+      idempotencyKey: relIdempKey,
       actor: params.actor,
       entries
     });
@@ -819,6 +826,7 @@ export class FinanceLedgerEngine {
     if (buyer) buyer.fundsOnHold = FinanceLedgerEngine.round(Math.max(0, buyer.fundsOnHold - gross));
     esc.releasedGross = FinanceLedgerEngine.round(esc.releasedGross + gross);
     esc.remaining = 0;
+    esc.releaseSeq = nextReleaseSeq;
     esc.status = esc.refundedTotal > 0 ? 'split' : 'released';
     this.audit({ actor: params.actor, action: 'ESCROW_RELEASED', target: `Order #${params.orderId}`, reason: params.reason || `Released $${freelancerNet.toFixed(2)} net to freelancer, $${platformFee.toFixed(2)} platform commission`, journalId: journal.id });
     return this.remember(params.requestKey, { journal, freelancerNet, platformFee });

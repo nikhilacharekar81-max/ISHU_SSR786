@@ -68,10 +68,57 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
   const [busyProposalId, setBusyProposalId] = useState<string | null>(null);
   const [proposalActionError, setProposalActionError] = useState<string | null>(null);
   const [proposalActionSuccess, setProposalActionSuccess] = useState<{ message: string; workstreamOrderId?: string } | null>(null);
+  const [localProjectStatus, setLocalProjectStatus] = useState<Project['status']>(project.status);
+  const [isUpdatingProjectStatus, setIsUpdatingProjectStatus] = useState<boolean>(false);
+
+  useEffect(() => {
+    setLocalProjectStatus(project.status);
+  }, [project.id, project.status]);
+
+  const effectiveStatus = localProjectStatus || project.status;
+  const isProjectCompleted = effectiveStatus === 'completed';
 
   const isProjectOwner = Boolean(currentUser && currentUser.id === project.buyerId);
   const projectProposals = proposals.filter(p => p.projectId === project.id);
   const myProposalsOnProject = currentUser ? projectProposals.filter(p => p.freelancerId === currentUser.id) : [];
+
+  const handleUpdateProjectStatus = async (nextStatus: 'completed' | 'open') => {
+    if (isUpdatingProjectStatus) return;
+    setIsUpdatingProjectStatus(true);
+    setProposalActionError(null);
+    setProposalActionSuccess(null);
+    try {
+      const token = getAuthToken();
+      const res = await fetch(`/api/projects/${project.id}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ status: nextStatus })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setProposalActionError(data.error || 'Failed to update project status.');
+        return;
+      }
+      setLocalProjectStatus(nextStatus);
+      if (onRefresh) await onRefresh();
+      if (nextStatus === 'completed') {
+        setProposalActionSuccess({
+          message: 'Project marked as completed (Bidding Closed). Your project is now hidden from the public project listing page.'
+        });
+      } else {
+        setProposalActionSuccess({
+          message: 'Project reopened for bidding and restored to the public project listing page.'
+        });
+      }
+    } catch (err: any) {
+      setProposalActionError(err?.message || 'Failed to update project status.');
+    } finally {
+      setIsUpdatingProjectStatus(false);
+    }
+  };
 
   const resolveProposalWorkstreamId = (prop: Proposal): string | undefined => {
     if (prop.workstreamOrderId) return prop.workstreamOrderId;
@@ -255,9 +302,9 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
     }, 1200);
   };
 
-  // Similar projects filter
+  // Similar projects filter (only open/published projects)
   const relatedProjects = allProjects
-    .filter(p => p.id !== project.id && (p.category === project.category || p.skills?.some(s => project.skills?.includes(s))))
+    .filter(p => p.id !== project.id && (p.status === 'open' || p.status === 'published') && (p.category === project.category || p.skills?.some(s => project.skills?.includes(s))))
     .slice(0, 3);
 
   return (
@@ -299,7 +346,16 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                 }`}>
                   {project.projectType === 'hourly' ? 'Hourly Rate' : 'Fixed Price'}
                 </span>
-                {project.isUrgent && (
+                {isProjectCompleted ? (
+                  <span className="px-2.5 py-0.5 text-xs font-bold rounded-md bg-slate-900 text-white border border-slate-800 flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-400" /> Completed · Bidding Closed
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-0.5 text-xs font-bold rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Open for Proposals
+                  </span>
+                )}
+                {project.isUrgent && !isProjectCompleted && (
                   <span className="px-2.5 py-0.5 text-xs font-bold rounded-md bg-amber-100 text-amber-800 border border-amber-200 flex items-center gap-1">
                     <Zap className="w-3 h-3 fill-amber-500 text-amber-500" /> Urgent Job
                   </span>
@@ -327,7 +383,7 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                 <span className="hidden sm:inline text-slate-300">•</span>
                 <span className="flex items-center gap-1.5">
                   <Briefcase className="w-3.5 h-3.5 text-slate-400" />
-                  <span>{project.proposalsCount || 8} Proposals received</span>
+                  <span>{project.proposalsCount || 0} Proposals received</span>
                 </span>
                 <span className="hidden sm:inline text-slate-300">•</span>
                 <span className="flex items-center gap-1.5">
@@ -337,8 +393,8 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               </div>
             </div>
 
-            {/* Quick Action Top Bar (Bookmark & Share) */}
-            <div className="flex items-center gap-2 shrink-0 pt-2 lg:pt-0">
+            {/* Quick Action Top Bar (Bookmark, Share & Owner/Freelancer CTA) */}
+            <div className="flex flex-wrap items-center gap-2 shrink-0 pt-2 lg:pt-0">
               <button
                 type="button"
                 onClick={handleToggleBookmark}
@@ -362,12 +418,41 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                 <span className="hidden sm:inline">{copiedLink ? 'Link Copied!' : 'Share'}</span>
               </button>
 
-              <a
-                href="#submit-proposal-section"
-                className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5"
-              >
-                <span>Send Proposal</span>
-              </a>
+              {isProjectOwner ? (
+                isProjectCompleted ? (
+                  <button
+                    type="button"
+                    disabled={isUpdatingProjectStatus}
+                    onClick={() => handleUpdateProjectStatus('open')}
+                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-800 border border-slate-300 font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>{isUpdatingProjectStatus ? 'Updating...' : 'Reopen Project Bidding'}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isUpdatingProjectStatus}
+                    onClick={() => handleUpdateProjectStatus('completed')}
+                    className="px-4 py-2.5 bg-slate-900 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>{isUpdatingProjectStatus ? 'Closing Bidding...' : 'Mark Project as Completed (Close Bidding)'}</span>
+                  </button>
+                )
+              ) : isProjectCompleted ? (
+                <span className="px-4 py-2.5 bg-slate-100 text-slate-600 border border-slate-200 font-bold text-xs rounded-xl flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-slate-500" />
+                  <span>Bidding Closed</span>
+                </span>
+              ) : (
+                <a
+                  href="#submit-proposal-section"
+                  className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+                >
+                  <span>Send Proposal</span>
+                </a>
+              )}
             </div>
           </div>
 
@@ -596,15 +681,50 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                       You can accept multiple proposals to hire multiple freelancers for this project. Every accepted freelancer receives their own independent USD escrow Workstream.
                     </p>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
                     <span className="px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full text-xs font-bold">
                       {projectProposals.filter(p => p.status === 'accepted').length} Hired
                     </span>
                     <span className="px-3 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-full text-xs font-bold">
                       {projectProposals.filter(p => p.status === 'pending').length} Pending
                     </span>
+                    {isProjectCompleted ? (
+                      <button
+                        type="button"
+                        disabled={isUpdatingProjectStatus}
+                        onClick={() => handleUpdateProjectStatus('open')}
+                        className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>{isUpdatingProjectStatus ? 'Updating...' : 'Reopen Bidding'}</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={isUpdatingProjectStatus}
+                        onClick={() => handleUpdateProjectStatus('completed')}
+                        className="px-3.5 py-1.5 bg-slate-900 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 shadow-xs"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>{isUpdatingProjectStatus ? 'Closing...' : 'Mark Project as Completed (Close Bidding)'}</span>
+                      </button>
+                    )}
                   </div>
                 </div>
+
+                {isProjectCompleted && (
+                  <div className="p-4 bg-slate-900 text-white rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <div>
+                        <span className="font-bold block">Project Completed · Bidding Closed</span>
+                        <span className="text-slate-300 text-[11px]">
+                          This project is hidden from the public project listing page and closed to new proposals. Your active Workstreams continue normally.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {proposalActionError && (
                   <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 font-semibold flex items-center gap-2">
@@ -786,8 +906,14 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               
               <div className="pb-4 border-b border-slate-100 flex items-center justify-between">
                 <div>
-                  <h2 className="text-xl font-extrabold text-slate-900">Send Your Proposal</h2>
-                  <p className="text-xs text-slate-500">Submit your pitch, delivery timeframe, and deposit requirements directly to the buyer.</p>
+                  <h2 className="text-xl font-extrabold text-slate-900">
+                    {isProjectCompleted ? 'Project Completed — Bidding Closed' : 'Send Your Proposal'}
+                  </h2>
+                  <p className="text-xs text-slate-500">
+                    {isProjectCompleted
+                      ? 'The buyer has finished hiring for this project and closed bidding.'
+                      : 'Submit your pitch, delivery timeframe, and deposit requirements directly to the buyer.'}
+                  </p>
                 </div>
                 {isSubmitted && (
                   <span className="px-3 py-1 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-full text-xs font-bold flex items-center gap-1">
@@ -796,7 +922,24 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                 )}
               </div>
 
-              {isSubmitted ? (
+              {isProjectCompleted ? (
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 text-center space-y-3">
+                  <CheckCircle2 className="w-10 h-10 text-slate-400 mx-auto" />
+                  <h3 className="text-base font-extrabold text-slate-900">This Project Listing is Closed</h3>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    {project.buyerName} has marked this project as completed and is no longer accepting new proposals.
+                  </p>
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={(e) => navigate('/projects', e)}
+                      className="px-5 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition-colors cursor-pointer"
+                    >
+                      Browse Open Projects
+                    </button>
+                  </div>
+                </div>
+              ) : isSubmitted ? (
                 <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-6 text-center space-y-4">
                   <div className="w-12 h-12 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center mx-auto shadow-sm">
                     <Check className="w-6 h-6 stroke-[3]" />
@@ -1076,13 +1219,15 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
                 </div>
 
                 <div className="flex justify-between items-center pb-2 border-b border-slate-50">
-                  <span className="text-slate-500">Time Remaining:</span>
-                  <span className="font-bold text-amber-600">6 days remaining</span>
+                  <span className="text-slate-500">Listing Status:</span>
+                  <span className={`font-bold ${isProjectCompleted ? 'text-slate-700' : 'text-emerald-600'}`}>
+                    {isProjectCompleted ? 'Completed (Closed)' : 'Open for Bidding'}
+                  </span>
                 </div>
 
                 <div className="flex justify-between items-center pb-2 border-b border-slate-50">
                   <span className="text-slate-500">Proposals Count:</span>
-                  <span className="font-bold text-slate-900">{project.proposalsCount || 8} Submitted</span>
+                  <span className="font-bold text-slate-900">{project.proposalsCount || 0} Submitted</span>
                 </div>
 
                 <div className="flex justify-between items-center">
@@ -1092,12 +1237,36 @@ export const ProjectDetailView: React.FC<ProjectDetailViewProps> = ({
               </div>
 
               <div className="pt-2">
-                <a
-                  href="#submit-proposal-section"
-                  className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5"
-                >
-                  <span>Submit Proposal</span>
-                </a>
+                {isProjectOwner ? (
+                  isProjectCompleted ? (
+                    <button
+                      type="button"
+                      disabled={isUpdatingProjectStatus}
+                      onClick={() => handleUpdateProjectStatus('open')}
+                      className="w-full py-3 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-800 border border-slate-300 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span>{isUpdatingProjectStatus ? 'Updating...' : 'Reopen Project Bidding'}</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={isUpdatingProjectStatus}
+                      onClick={() => handleUpdateProjectStatus('completed')}
+                      className="w-full py-3 bg-slate-900 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <span>{isUpdatingProjectStatus ? 'Closing...' : 'Mark Project as Completed (Close Bidding)'}</span>
+                    </button>
+                  )
+                ) : !isProjectCompleted ? (
+                  <a
+                    href="#submit-proposal-section"
+                    className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <span>Submit Proposal</span>
+                  </a>
+                ) : null}
               </div>
             </div>
 

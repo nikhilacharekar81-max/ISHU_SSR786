@@ -158,6 +158,10 @@ export interface Order {
   reviewWindowDays?: number;
   reviewWindowExpiresAt?: string;
   review?: Review;
+  sellerReview?: Review;
+  escrowRemaining?: number;
+  totalReleased?: number;
+  hasPaidInvoice?: boolean;
 }
 
 export interface UserAccount {

@@ -61,10 +61,27 @@ export function useWorkstreamFiles({
       });
     }
 
-    // 2. Files attached in Messages
+    // 2. Files attached in Messages or Deliverable Submitted System Events
     messages
-      .filter(m => m.orderId === selectedOrder.id && (m.type === 'file' || m.fileInfo))
+      .filter(m => m.orderId === selectedOrder.id)
       .forEach(m => {
+        if (Array.isArray(m.metadata?.files)) {
+          m.metadata.files.forEach((f: any, idx: number) => {
+            if (!f) return;
+            const key = f.url && f.url !== '#' ? f.url : `msg_deliv_${m.id}_${f.name || idx}`;
+            if (!filesMap.has(key)) {
+              filesMap.set(key, {
+                id: f.id || `${m.id}_file_${idx}`,
+                name: f.name || 'Deliverable File',
+                size: f.size || '1.0 MB',
+                url: f.url || '#',
+                uploadedAt: m.timestamp,
+                uploadedBy: 'Seller',
+                type: 'deliverable'
+              });
+            }
+          });
+        }
         const fileInfo = m.fileInfo;
         if (!fileInfo) return;
         const key = fileInfo.url && fileInfo.url !== '#' ? fileInfo.url : fileInfo.name;

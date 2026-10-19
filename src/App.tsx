@@ -1,37 +1,37 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, Suspense, lazy } from 'react';
 import {
   Activity, AlertCircle, Bell, Briefcase, CheckCircle2, ChevronDown, ChevronRight, Clock,
   Filter, Flame, Grid, Heart, HelpCircle, List, Mail, MessageSquare,
   PlusCircle, RefreshCw, Search, Send, Shield, ShieldCheck, Sparkles, Star,
   Trash2, User, Users, Wallet
 } from 'lucide-react';
-import { PaymentsModule } from './components/PaymentsModule';
 import { FreelancerProfileView } from './components/FreelancerProfileView';
-import { InspectUserModal, EditUserProfileModal, EditProfilePage } from './components/profile';
-import { SettingsPage } from './components/SettingsPage';
+import { EditUserProfileModal } from './components/profile/EditUserProfileModal';
 import { HeaderCategoriesNav, PPH_CATEGORIES } from './components/HeaderCategoriesNav';
 import { ViewingGigModal, EditGigModal, DeleteGigModal, CreateGigView, RelatedGigsSection, GigDetailView } from './components/gigs';
 import { FreelancerSearchView, ProjectSearchView, ProjectDetailView } from './components/marketplace';
-import { AdminPage } from './pages/AdminPage';
 import { Reviews } from './components/gig_reviews';
 import { useAppData } from './hooks/useAppData';
 import { Header, Footer, ImpersonationBanner } from './layout';
 import { slugify } from './utils/slugify';
 import { getDeviceId } from './utils/deviceId';
 import { RESERVED_ROUTES } from './shared/routes';
-
-import { initialUsers, initialGigs, initialProjects, initialOrders } from './data/mockData';
-import {
-  WorkstreamSidebar,
-  WorkstreamList,
-  WorkstreamWorkspace,
-  StartWorkstreamModal,
+import type {
   WorkstreamItem,
   WorkstreamFilter,
   SharedFileItem
 } from './components/workstream';
 import { useWorkstream } from './hooks/workstream/useWorkstream';
 import { calculateOrderFees } from './shared/fees';
+
+const AdminPage = lazy(() => import('./pages/AdminPage').then(m => ({ default: m.AdminPage })));
+const PaymentsModule = lazy(() => import('./components/PaymentsModule').then(m => ({ default: m.PaymentsModule })));
+const SettingsPage = lazy(() => import('./components/SettingsPage').then(m => ({ default: m.SettingsPage })));
+const EditProfilePage = lazy(() => import('./components/profile/EditProfilePage').then(m => ({ default: m.EditProfilePage })));
+const WorkstreamSidebar = lazy(() => import('./components/workstream/WorkstreamSidebar').then(m => ({ default: m.WorkstreamSidebar })));
+const WorkstreamList = lazy(() => import('./components/workstream/WorkstreamList').then(m => ({ default: m.WorkstreamList })));
+const WorkstreamWorkspace = lazy(() => import('./components/workstream/WorkstreamWorkspace').then(m => ({ default: m.WorkstreamWorkspace })));
+const StartWorkstreamModal = lazy(() => import('./components/workstream/StartWorkstreamModal').then(m => ({ default: m.StartWorkstreamModal })));
 
 const financeLedger = {
   quoteOrder: (amount: number) => calculateOrderFees(amount)
@@ -104,25 +104,29 @@ export default function App({ initialPath, initialData }: { initialPath?: string
   const updateCurrentUser = (u: UserAccount | null | ((prev: UserAccount | null) => UserAccount | null)) => {
     setCurrentUser(prev => {
       const next = typeof u === 'function' ? u(prev) : u;
-      if (next) {
-        if (typeof window !== 'undefined') localStorage.setItem('current_user', JSON.stringify(next));
-      } else {
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('current_user');
-          localStorage.removeItem('user');
+      try {
+        if (next) {
+          if (typeof window !== 'undefined') localStorage.setItem('current_user', JSON.stringify(next));
+        } else {
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('current_user');
+            localStorage.removeItem('user');
+          }
         }
-      }
+      } catch {}
       return next;
     });
   };
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const cached = localStorage.getItem('current_user') || localStorage.getItem('user');
-      const token = getAuthToken();
-      if (cached && token) {
-        try { setCurrentUser(JSON.parse(cached)); } catch(e) {}
-      }
+      try {
+        const cached = localStorage.getItem('current_user') || localStorage.getItem('user');
+        const token = getAuthToken();
+        if (cached && token) {
+          setCurrentUser(JSON.parse(cached));
+        }
+      } catch {}
     }
   }, []);
 
@@ -653,17 +657,15 @@ export default function App({ initialPath, initialData }: { initialPath?: string
   // Fetch initial data & restore user session
   useEffect(() => {
     if (window.location.pathname === '/messages' && !getAuthToken()) {
-        setPath('/');
-        window.history.replaceState({}, '', '/');
-        setIsLoginModalOpen(true);
+      setPath('/');
+      window.history.replaceState({}, '', '/');
+      setIsLoginModalOpen(true);
     }
     const token = getAuthToken();
     if (token) {
-        loadUserSession().then(() => {
-          refresh();
-        });
-    } else {
-        refresh();
+      loadUserSession();
+    } else if (!initialData?.gigs?.length) {
+      refresh();
     }
   }, []);
 
@@ -711,17 +713,13 @@ export default function App({ initialPath, initialData }: { initialPath?: string
     }
   };
 
-
-
-
-
+  const activeUserId = impersonatedUser ? impersonatedUser.id : (currentUser ? currentUser.id : null);
   useEffect(() => {
-    const activeUserId = impersonatedUser ? impersonatedUser.id : (currentUser ? currentUser.id : null);
     if (activeUserId) {
-        fetchUserEmails(activeUserId);
-        refresh();
+      fetchUserEmails(activeUserId);
+      refresh();
     }
-  }, [impersonatedUser, currentUser]);
+  }, [activeUserId]);
 
   const handleContactSeller = async (sellerId: string, sellerName: string, gigTitle: string, gigId?: string, projectId?: string) => {
     const currentUid = impersonatedUser ? impersonatedUser.id : currentUser?.id;
@@ -2164,26 +2162,28 @@ export default function App({ initialPath, initialData }: { initialPath?: string
   // Dedicated Admin Panel Route
   if (isAdmin) {
     return (
-      <AdminPage
-        currentUser={currentUser}
-        impersonatedUser={impersonatedUser}
-        updateCurrentUser={updateCurrentUser}
-        setImpersonatedUser={setImpersonatedUser}
-        usersList={usersList}
-        setUsersList={setUsersList}
-        projects={projects}
-        gigs={gigs}
-        orders={orders}
-        proposals={proposals}
-        platformFee={platformFee}
-        clientServiceFee={clientServiceFee}
-        smallOrderFeeThreshold={smallOrderFeeThreshold}
-        smallOrderFeeAmount={smallOrderFeeAmount}
-        escrowProtectionDays={escrowProtectionDays}
-        navigate={navigate}
-        refresh={refresh}
-        getDeviceId={getDeviceId}
-      />
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500 text-sm font-semibold">Loading Admin Console...</div>}>
+        <AdminPage
+          currentUser={currentUser}
+          impersonatedUser={impersonatedUser}
+          updateCurrentUser={updateCurrentUser}
+          setImpersonatedUser={setImpersonatedUser}
+          usersList={usersList}
+          setUsersList={setUsersList}
+          projects={projects}
+          gigs={gigs}
+          orders={orders}
+          proposals={proposals}
+          platformFee={platformFee}
+          clientServiceFee={clientServiceFee}
+          smallOrderFeeThreshold={smallOrderFeeThreshold}
+          smallOrderFeeAmount={smallOrderFeeAmount}
+          escrowProtectionDays={escrowProtectionDays}
+          navigate={navigate}
+          refresh={refresh}
+          getDeviceId={getDeviceId}
+        />
+      </Suspense>
     );
   }
 
@@ -2902,14 +2902,14 @@ export default function App({ initialPath, initialData }: { initialPath?: string
                   onClick={(e) => navigate('/projects', e)}
                   className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all shadow-xs shrink-0 cursor-pointer"
                 >
-                  <span>View All Projects ({projects.length})</span>
+                  <span>View All Projects ({projects.filter(p => p.status === 'open' || p.status === 'published').length})</span>
                   <ChevronRight className="w-4 h-4 text-emerald-400" />
                 </button>
               </div>
 
               {/* Listicle View of Projects */}
               <div className="space-y-4">
-                {projects.slice(0, 8).map((project) => {
+                {projects.filter(p => p.status === 'open' || p.status === 'published').slice(0, 8).map((project) => {
                   const projectUrl = `/projects/${project.id}`;
                   return (
                     <div
@@ -3130,11 +3130,13 @@ export default function App({ initialPath, initialData }: { initialPath?: string
 
         {/* VIEW: ACCOUNT & PROFILE SETTINGS WEBPAGE (/settings) */}
         {isSettings && (
-          <SettingsPage 
-            currentUser={currentUser}
-            updateCurrentUser={updateCurrentUser}
-            navigate={navigate}
-          />
+          <Suspense fallback={<div className="py-16 text-center text-slate-400 text-sm">Loading Settings...</div>}>
+            <SettingsPage 
+              currentUser={currentUser}
+              updateCurrentUser={updateCurrentUser}
+              navigate={navigate}
+            />
+          </Suspense>
         )}
 
         {/* VIEW: LOGIN WEBPAGE (/login) */}
@@ -4091,6 +4093,7 @@ export default function App({ initialPath, initialData }: { initialPath?: string
               </button>
             </div>
           ) : (
+          <Suspense fallback={<div className="py-16 text-center text-slate-400 text-sm">Loading Workstreams...</div>}>
           <div className="bg-slate-50 min-h-[750px] font-sans pb-12">
             {selectedOrder || messageOrderId ? (
               // Active Workstream Workspace View
@@ -4244,6 +4247,7 @@ export default function App({ initialPath, initialData }: { initialPath?: string
               currentUser={impersonatedUser || currentUser}
             />
           </div>
+          </Suspense>
           )
         )}
 
@@ -4404,23 +4408,27 @@ export default function App({ initialPath, initialData }: { initialPath?: string
 
       {/* EDIT PROFILE WEBPAGE (/edit-profile or /freelancer/edit) */}
       {isEditProfile && (
-        <EditProfilePage 
-          currentUser={currentUser}
-          updateCurrentUser={updateCurrentUser}
-          navigate={navigate}
-        />
+        <Suspense fallback={<div className="py-16 text-center text-slate-400 text-sm">Loading Profile Editor...</div>}>
+          <EditProfilePage 
+            currentUser={currentUser}
+            updateCurrentUser={updateCurrentUser}
+            navigate={navigate}
+          />
+        </Suspense>
       )}
       {isPayments && (
         (impersonatedUser || currentUser) ? (
           <div className="max-w-7xl mx-auto px-4 py-8">
-            <PaymentsModule 
-              gigs={gigs} 
-              orders={orders} 
-              projects={projects} 
-              proposals={proposals} 
-              currentUser={(impersonatedUser || currentUser)!} 
-              onBalanceUpdate={refresh}
-            />
+            <Suspense fallback={<div className="py-16 text-center text-slate-400 text-sm">Loading Payments & Wallet...</div>}>
+              <PaymentsModule 
+                gigs={gigs} 
+                orders={orders} 
+                projects={projects} 
+                proposals={proposals} 
+                currentUser={(impersonatedUser || currentUser)!} 
+                onBalanceUpdate={refresh}
+              />
+            </Suspense>
           </div>
         ) : (
           <div className="max-w-md mx-auto my-16 p-8 bg-white border border-slate-200 rounded-3xl text-center space-y-4 shadow-sm">

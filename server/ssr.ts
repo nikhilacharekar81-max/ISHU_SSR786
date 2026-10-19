@@ -24,10 +24,15 @@ export async function setupSSR(
   getData: () => { gigs: any[]; users: any[]; projects: any[]; categories: any[] }
 ) {
   let vite: any;
-  let templateHtml: string;
+  let templateHtml: string = '';
   let ssrRender: any;
 
-  if (!isProd) {
+  const distPath = path.resolve(root, 'dist');
+  const clientDist = path.resolve(distPath, 'client');
+  const serverDist = path.resolve(distPath, 'server');
+  const hasProdBuild = isProd && fs.existsSync(path.resolve(clientDist, 'index.html'));
+
+  if (!hasProdBuild) {
     const { createServer } = await import('vite');
     vite = await createServer({
       root,
@@ -35,19 +40,30 @@ export async function setupSSR(
       appType: 'custom'
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.resolve(root, 'dist');
-    const clientDist = path.resolve(distPath, 'client');
-    const serverDist = path.resolve(distPath, 'server');
+    templateHtml = fs.readFileSync(path.resolve(root, 'index.html'), 'utf-8');
 
+    // Pre-warm SSR module and critical client assets in background so first visitor gets instant response
+    Promise.all([
+      vite.ssrLoadModule('/src/entry-server.tsx').then((mod: any) => {
+        ssrRender = mod.render;
+      }),
+      vite.transformRequest('/src/index.css').catch(() => {}),
+      vite.transformRequest('/src/entry-client.tsx').catch(() => {}),
+      vite.transformRequest('/src/App.tsx').catch(() => {})
+    ]).catch((err) => {
+      console.warn('Vite pre-warm warning:', err);
+    });
+  } else {
     app.use(express.static(clientDist, { index: false }));
     templateHtml = fs.readFileSync(path.resolve(clientDist, 'index.html'), 'utf-8');
 
-    const serverEntryFiles = fs.readdirSync(serverDist);
-    const entryFile = serverEntryFiles.find(f => f.startsWith('entry-server') || f.endsWith('.js'));
-    if (entryFile) {
-      const ssrModule = await import(path.resolve(serverDist, entryFile));
-      ssrRender = ssrModule.render;
+    if (fs.existsSync(serverDist)) {
+      const serverEntryFiles = fs.readdirSync(serverDist);
+      const entryFile = serverEntryFiles.find(f => f.startsWith('entry-server') || f.endsWith('.js'));
+      if (entryFile) {
+        const ssrModule = await import(path.resolve(serverDist, entryFile));
+        ssrRender = ssrModule.render;
+      }
     }
   }
 
@@ -194,12 +210,9 @@ export async function setupSSR(
       }
 
       // 3. Prepare HTML template
-      let template = '';
-      if (!isProd && vite) {
-        template = fs.readFileSync(path.resolve(root, 'index.html'), 'utf-8');
+      let template = templateHtml || fs.readFileSync(path.resolve(root, 'index.html'), 'utf-8');
+      if (!hasProdBuild && vite) {
         template = await vite.transformIndexHtml(req.originalUrl, template);
-      } else {
-        template = templateHtml;
       }
 
       // Clean existing head tags from template
@@ -213,9 +226,10 @@ export async function setupSSR(
 
       // 4. React SSR render full HTML
       let renderFn = ssrRender;
-      if (!isProd && vite) {
+      if (!renderFn && !hasProdBuild && vite) {
         const mod = await vite.ssrLoadModule('/src/entry-server.tsx');
         renderFn = mod.render;
+        ssrRender = renderFn;
       }
 
       const rendered = renderFn ? renderFn(pathname, initialData) : { html: '', head: '' };

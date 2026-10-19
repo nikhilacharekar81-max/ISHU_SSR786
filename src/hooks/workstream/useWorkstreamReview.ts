@@ -43,6 +43,7 @@ export function useWorkstreamReview({
     comment: string;
     gigId?: string;
     projectId?: string;
+    reviewId?: string;
   }): Promise<boolean> => {
     setReviewError(null);
 
@@ -51,9 +52,9 @@ export function useWorkstreamReview({
       return false;
     }
 
-    // Verify order eligibility (completed or cancelled)
-    if (selectedOrder.status !== 'completed' && selectedOrder.status !== 'cancelled') {
-      setReviewError(`Reviews can only be submitted for completed or cancelled Workstreams (current status: ${selectedOrder.status}).`);
+    // Verify order eligibility (completed, cancelled, or invoice paid)
+    if (selectedOrder.status !== 'completed' && selectedOrder.status !== 'cancelled' && !selectedOrder.hasPaidInvoice) {
+      setReviewError(`Reviews can only be submitted once an invoice has been paid or the Workstream is completed.`);
       return false;
     }
 
@@ -71,15 +72,18 @@ export function useWorkstreamReview({
     setIsSubmittingReview(true);
     try {
       const token = getAuthToken();
-      const res = await fetch('/api/reviews', {
-        method: 'POST',
+      const isEdit = Boolean(review.reviewId);
+      const url = isEdit ? `/api/reviews/${review.reviewId}` : '/api/reviews';
+      const method = isEdit ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method,
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         },
         body: JSON.stringify({
           orderId: selectedOrder.id,
-          targetUserId: selectedOrder.sellerId,
           rating: review.rating,
           comment: review.comment.trim(),
           orderTitle: selectedOrder.title,
@@ -98,9 +102,10 @@ export function useWorkstreamReview({
       }
 
       const createdReview = data.review || data;
-      const updatedOrder: Order = {
+      const isSellerReview = createdReview.reviewerId === selectedOrder.sellerId;
+      const updatedOrder: Order = data.order || {
         ...selectedOrder,
-        review: createdReview
+        ...(isSellerReview ? { sellerReview: createdReview } : { review: createdReview })
       };
 
       if (setOrders) {

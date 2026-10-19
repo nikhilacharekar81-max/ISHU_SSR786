@@ -1,12 +1,14 @@
-import React, { useState } from 'react';
-import { X, Star, AlertCircle, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Star, X, CheckCircle2, AlertCircle } from 'lucide-react';
 import { WorkstreamItem } from './types';
 
 interface WorkstreamReviewModalProps {
   isOpen: boolean;
   order: WorkstreamItem;
+  currentUserId?: string;
+  partnerName?: string;
   onClose: () => void;
-  onSubmitReview: (review: { rating: number; comment: string; gigId?: string; projectId?: string }) => Promise<boolean>;
+  onSubmitReview: (review: { rating: number; comment: string; gigId?: string; projectId?: string; reviewId?: string }) => Promise<boolean>;
   error?: string | null;
   isSubmitting?: boolean;
 }
@@ -14,31 +16,36 @@ interface WorkstreamReviewModalProps {
 export const WorkstreamReviewModal: React.FC<WorkstreamReviewModalProps> = ({
   isOpen,
   order,
+  currentUserId,
+  partnerName,
   onClose,
   onSubmitReview,
-  error: externalError,
+  error,
   isSubmitting = false
 }) => {
-  const [rating, setRating] = useState(5);
-  const [hoverRating, setHoverRating] = useState(0);
-  const [comment, setComment] = useState('Excellent delivery! Fast turnaround and high quality.');
+  const isSeller = !!currentUserId && currentUserId === order.sellerId;
+  const existingReview = isSeller ? (order as any).sellerReview : order.review;
+  const [rating, setRating] = useState<number>(5);
+  const [hoveredRating, setHoveredRating] = useState<number | null>(null);
+  const [comment, setComment] = useState<string>('');
   const [localError, setLocalError] = useState<string | null>(null);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    if (isOpen) {
+      setRating(existingReview?.rating || 5);
+      setComment(existingReview?.comment || '');
+      setLocalError(null);
+    }
+  }, [isOpen, existingReview?.id, existingReview?.rating, existingReview?.comment]);
 
-  const displayError = externalError || localError;
+  if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocalError(null);
 
-    if (rating < 1 || rating > 5) {
-      setLocalError('Please select a star rating between 1 and 5.');
-      return;
-    }
-
     if (!comment.trim()) {
-      setLocalError('Please enter a feedback comment before submitting.');
+      setLocalError('Please write a brief comment about your experience.');
       return;
     }
 
@@ -46,111 +53,109 @@ export const WorkstreamReviewModal: React.FC<WorkstreamReviewModalProps> = ({
       rating,
       comment: comment.trim(),
       gigId: order.gigId,
-      projectId: order.projectId
+      projectId: order.projectId,
+      reviewId: existingReview?.id
     });
 
     if (success) {
-      setLocalError(null);
-      onClose();
+      setComment('');
+      setRating(5);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-6 animate-in fade-in zoom-in-95 duration-150">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 bg-amber-50 text-amber-500 rounded-xl">
-              <Star className="w-5 h-5 fill-amber-400" />
-            </div>
-            <div>
-              <h3 className="text-base font-bold text-fiverr-dark">Write Review & Feedback</h3>
-              <p className="text-[11px] text-slate-400">Order #{order.id}</p>
-            </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+      <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5 relative">
+        <button
+          onClick={onClose}
+          disabled={isSubmitting}
+          className="absolute top-5 right-5 p-2 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+        >
+          <X className="w-5 h-5" />
+        </button>
+
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-500">
+            <Star className="w-6 h-6 fill-amber-400 text-amber-400" />
           </div>
-          <button
-            onClick={onClose}
-            disabled={isSubmitting}
-            className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition cursor-pointer disabled:opacity-50"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div>
+            <h3 className="text-base font-bold text-fiverr-dark">
+              {existingReview ? 'Update Your Review' : isSeller ? `Review Buyer${partnerName ? ` (${partnerName})` : ''}` : `Review Freelancer${partnerName ? ` (${partnerName})` : ''}`}
+            </h3>
+            <p className="text-xs text-slate-400">Order #{order.id} • {order.title}</p>
+          </div>
         </div>
 
-        {displayError && (
-          <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-600 flex items-start gap-2.5 animate-in fade-in">
-            <AlertCircle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
-            <div className="flex-1 font-medium">{displayError}</div>
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-          <div>
-            <label className="block text-fiverr-dark font-bold uppercase tracking-wider text-[10px] mb-2">
-              Rate Freelancer's Work
-            </label>
-            <div className="flex items-center gap-2">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <button
-                  key={star}
-                  type="button"
-                  disabled={isSubmitting}
-                  onClick={() => {
-                    setRating(star);
-                    setLocalError(null);
-                  }}
-                  onMouseEnter={() => setHoverRating(star)}
-                  onMouseLeave={() => setHoverRating(0)}
-                  className="p-1 focus:outline-none transition-transform hover:scale-110 cursor-pointer disabled:opacity-50"
-                >
-                  <Star
-                    className={`w-6 h-6 ${
-                      star <= (hoverRating || rating)
-                        ? 'text-yellow-400 fill-yellow-400'
-                        : 'text-slate-200'
-                    }`}
-                  />
-                </button>
-              ))}
-              <span className="ml-2 font-mono font-bold text-slate-600 text-sm">
-                {hoverRating || rating}.0
-              </span>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-center space-y-2">
+            <p className="text-xs font-bold text-slate-600 uppercase tracking-wider">Overall Rating</p>
+            <div className="flex items-center justify-center gap-2">
+              {[1, 2, 3, 4, 5].map((star) => {
+                const active = (hoveredRating !== null ? hoveredRating : rating) >= star;
+                return (
+                  <button
+                    type="button"
+                    key={star}
+                    onMouseEnter={() => setHoveredRating(star)}
+                    onMouseLeave={() => setHoveredRating(null)}
+                    onClick={() => setRating(star)}
+                    className="p-1 transition-transform hover:scale-110 cursor-pointer"
+                  >
+                    <Star
+                      className={`w-7 h-7 transition-colors ${
+                        active ? 'fill-amber-400 text-amber-400' : 'text-slate-300'
+                      }`}
+                    />
+                  </button>
+                );
+              })}
             </div>
+            <p className="text-xs font-semibold text-amber-600">
+              {rating === 5 && 'Exceptional (5/5)'}
+              {rating === 4 && 'Very Good (4/5)'}
+              {rating === 3 && 'Satisfactory (3/5)'}
+              {rating === 2 && 'Subpar (2/5)'}
+              {rating === 1 && 'Poor (1/5)'}
+            </p>
           </div>
 
-          <div>
-            <label className="block text-fiverr-dark font-bold uppercase tracking-wider text-[10px] mb-1.5">
-              Public Review & Feedback Note
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-fiverr-dark block">
+              {isSeller ? 'Share your experience working with this buyer' : 'Share your experience working with this seller'}
             </label>
             <textarea
-              rows={3}
               value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder={isSeller ? 'Was the buyer clear with requirements, responsive, and fair?' : 'How was the quality of work, communication, and adherence to deadlines?'}
+              rows={4}
               disabled={isSubmitting}
-              onChange={(e) => {
-                setComment(e.target.value);
-                setLocalError(null);
-              }}
-              placeholder="Share your experience working with this freelancer..."
-              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-fiverr-dark placeholder-slate-400 focus:outline-none focus:border-emerald-500 focus:bg-white resize-none leading-relaxed disabled:opacity-50"
+              className="w-full rounded-2xl border border-slate-200 p-3.5 text-xs text-fiverr-dark focus:outline-none focus:border-emerald-600 transition resize-none"
             />
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-2">
+          {(localError || error) && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{localError || error}</span>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-2">
             <button
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-fiverr-dark font-bold rounded-xl text-xs transition cursor-pointer disabled:opacity-50"
+              className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-100 transition cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-xs transition cursor-pointer flex items-center gap-2 disabled:opacity-50"
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition cursor-pointer disabled:opacity-50"
             >
-              {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              <span>{isSubmitting ? 'Submitting...' : 'Submit Review'}</span>
+              <CheckCircle2 className="w-4 h-4" />
+              <span>{isSubmitting ? 'Submitting...' : existingReview ? 'Update Review' : 'Submit Review'}</span>
             </button>
           </div>
         </form>

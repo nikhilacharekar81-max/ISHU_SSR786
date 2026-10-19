@@ -59,23 +59,34 @@ export function useWorkstreamEscrow({
         setSelectedOrder(updatedOrder);
       }
 
-      // Add completion system event
+      // Sync authoritative thread messages (deliverable_approved, escrow_released, order_completed)
       if (setMessages) {
-        const sysMsg: Message = {
-          id: `msg_escrow_${Date.now()}`,
-          orderId: selectedOrder.id,
-          senderId: 'system',
-          senderName: 'WorkSphere Escrow Vault',
-          text: `🎉 Escrow funds ($${selectedOrder.amount.toLocaleString()}) released to seller! Workstream marked as completed. Deliverables accepted.`,
-          timestamp: new Date().toISOString(),
-          type: 'system',
-          metadata: {
-            action: 'escrow_released',
-            amount: selectedOrder.amount
+        try {
+          const msgRes = await fetch(`/api/messages/${selectedOrder.id}`, {
+            headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) }
+          });
+          if (msgRes.ok) {
+            const freshMessages = await msgRes.json();
+            if (Array.isArray(freshMessages)) {
+              setMessages(prev => [...prev.filter(m => m.orderId !== selectedOrder.id), ...freshMessages]);
+            }
           }
-        };
-        // The server also broadcasts this event; skip if it already arrived (realtime merges the reverse case).
-        setMessages(prev => prev.some(m => m.orderId === selectedOrder.id && m.type === 'system' && m.metadata?.action === 'escrow_released') ? prev : [...prev, sysMsg]);
+        } catch {
+          const sysMsg: Message = {
+            id: `msg_escrow_${Date.now()}`,
+            orderId: selectedOrder.id,
+            senderId: 'system',
+            senderName: 'WorkSphere Escrow Vault',
+            text: `🎉 Escrow funds ($${selectedOrder.amount.toLocaleString()}) released to seller! Workstream marked as completed. Deliverables accepted.`,
+            timestamp: new Date().toISOString(),
+            type: 'system',
+            metadata: {
+              action: 'escrow_released',
+              amount: selectedOrder.amount
+            }
+          };
+          setMessages(prev => prev.some(m => m.orderId === selectedOrder.id && m.type === 'system' && m.metadata?.action === 'escrow_released') ? prev : [...prev, sysMsg]);
+        }
       }
 
       setIsReleasingEscrow(false);

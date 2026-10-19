@@ -1,16 +1,15 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { UserAccount, Gig, Project, Proposal, Order, Dispute, Refund, Payout, Category, Review, SupportTicket, AuditLog, Message } from '../types';
-import { initialUsers, initialGigs, initialProjects, initialOrders } from '../data/mockData';
 import { getAuthToken } from '../utils/authToken';
 import { getDeviceId } from '../utils/deviceId';
 
 
 export const useAppData = (initialData?: any) => {
-  const [users, setUsers] = useState<UserAccount[]>(initialData?.users ?? initialUsers);
-  const [gigs, setGigs] = useState<Gig[]>(initialData?.gigs ?? initialGigs);
-  const [projects, setProjects] = useState<Project[]>(initialData?.projects ?? initialProjects);
+  const [users, setUsers] = useState<UserAccount[]>(initialData?.users ?? []);
+  const [gigs, setGigs] = useState<Gig[]>(initialData?.gigs ?? []);
+  const [projects, setProjects] = useState<Project[]>(initialData?.projects ?? []);
   const [proposals, setProposals] = useState<Proposal[]>([]);
-  const [orders, setOrders] = useState<Order[]>(initialOrders);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [disputes, setDisputes] = useState<Dispute[]>([]);
@@ -39,10 +38,8 @@ export const useAppData = (initialData?: any) => {
     }
   };
 
-
-
-  const safeJson = async (res: Response, fallback: any = []) => {
-    if (!res.ok) return fallback;
+  const safeJson = async (res: Response | null, fallback: any = []) => {
+    if (!res || !res.ok) return fallback;
     const contentType = res.headers.get('content-type');
     if (!contentType || !contentType.includes('application/json')) return fallback;
     try {
@@ -88,30 +85,29 @@ export const useAppData = (initialData?: any) => {
         fetch('/api/users', reqOpt),
         fetch('/api/gigs', reqOpt),
         fetch('/api/projects', reqOpt),
-        fetch('/api/proposals', reqOpt),
-        fetch('/api/orders', reqOpt),
+        token ? fetch('/api/proposals', reqOpt) : Promise.resolve(null),
+        token ? fetch('/api/orders', reqOpt) : Promise.resolve(null),
         fetch('/api/categories', reqOpt),
         fetch('/api/reviews', reqOpt)
       ]);
 
-      const usersData = uRes.ok ? await safeJson(uRes, []) : [];
-      const gigsData = gRes.ok ? await safeJson(gRes, []) : [];
-      const projectsData = pRes.ok ? await safeJson(pRes, []) : [];
-      const proposalsData = prRes.ok ? await safeJson(prRes, []) : [];
-      const ords = oRes.ok ? await safeJson(oRes, []) : [];
-      const categoriesData = cRes.ok ? await safeJson(cRes, []) : [];
-      const reviewsData = revRes.ok ? await safeJson(revRes, []) : [];
+      const usersData = await safeJson(uRes, null);
+      const gigsData = await safeJson(gRes, null);
+      const projectsData = await safeJson(pRes, null);
+      const proposalsData = await safeJson(prRes, null);
+      const ords = await safeJson(oRes, null);
+      const categoriesData = await safeJson(cRes, null);
+      const reviewsData = await safeJson(revRes, null);
 
-      setUsers(usersData);
-      setGigs(gigsData);
+      if (Array.isArray(usersData) && usersData.length > 0) setUsers(usersData);
+      if (Array.isArray(gigsData) && gigsData.length > 0) setGigs(gigsData);
+      if (Array.isArray(projectsData) && projectsData.length > 0) setProjects(projectsData);
+      if (Array.isArray(proposalsData)) setProposals(proposalsData);
+      if (Array.isArray(ords)) setOrders(ords);
+      if (Array.isArray(categoriesData) && categoriesData.length > 0) setCategories(categoriesData);
+      if (Array.isArray(reviewsData)) setReviews(reviewsData);
 
-      if (projectsData.length > 0) setProjects(projectsData);
-      if (proposalsData.length > 0) setProposals(proposalsData);
-      if (ords.length > 0) setOrders(ords);
-      if (categoriesData.length > 0) setCategories(categoriesData);
-      if (reviewsData.length > 0) setReviews(reviewsData);
-
-      if (isAdminOrSupport) {
+      if (token && isAdminOrSupport) {
         const [dRes, rRes, payRes, sRes, aRes, setRes] = await Promise.all([
           fetch('/api/disputes', reqOpt),
           fetch('/api/refunds', reqOpt),
@@ -121,12 +117,12 @@ export const useAppData = (initialData?: any) => {
           fetch('/api/admin/settings', reqOpt)
         ]);
 
-        const disputesData = dRes.ok ? await safeJson(dRes, []) : [];
-        const refundsData = rRes.ok ? await safeJson(rRes, []) : [];
-        const payoutsData = payRes.ok ? await safeJson(payRes, []) : [];
-        const supportTicketsData = sRes.ok ? await safeJson(sRes, []) : [];
-        const auditLogsData = aRes.ok ? await safeJson(aRes, []) : [];
-        const settingsData = setRes.ok ? await safeJson(setRes, null) : null;
+        const disputesData = await safeJson(dRes, []);
+        const refundsData = await safeJson(rRes, []);
+        const payoutsData = await safeJson(payRes, []);
+        const supportTicketsData = await safeJson(sRes, []);
+        const auditLogsData = await safeJson(aRes, []);
+        const settingsData = await safeJson(setRes, null);
 
         if (disputesData.length > 0) setDisputes(disputesData);
         if (refundsData.length > 0) setRefunds(refundsData);

@@ -63,6 +63,8 @@ export interface WorkstreamOffer {
   additionalAmount?: number;
   clientAdditionalTotal?: number;
   currencySymbol?: string;
+  files?: Array<{ id?: string; name: string; size: string; url: string; uploadedAt?: string }>;
+  reference?: string;
 }
 
 export interface WorkstreamItem extends Order {

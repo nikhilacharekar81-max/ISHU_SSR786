@@ -8,6 +8,9 @@ export interface CreateOfferInput {
   amount: number;
   deliveryDays?: number;
   note?: string;
+  reference?: string;
+  files?: Array<{ name: string; size: string; url: string }>;
+  deliverWork?: boolean;
 }
 
 export interface OfferActionResult {
@@ -26,6 +29,9 @@ export function useWorkstreamOffers(orderId: string | undefined, refreshKey?: st
   const [offers, setOffers] = useState<WorkstreamOffer[]>([]);
   const [currencySymbol, setCurrencySymbol] = useState('$');
   const [escrowFunded, setEscrowFunded] = useState(false);
+  const [escrowRemaining, setEscrowRemaining] = useState(0);
+  const [totalReleased, setTotalReleased] = useState(0);
+  const [hasPaidInvoice, setHasPaidInvoice] = useState(false);
   const activeOrderRef = useRef<string | undefined>(orderId);
   activeOrderRef.current = orderId;
 
@@ -43,6 +49,9 @@ export function useWorkstreamOffers(orderId: string | undefined, refreshKey?: st
       setOffers(Array.isArray(data.offers) ? data.offers : []);
       if (data.currencySymbol) setCurrencySymbol(data.currencySymbol);
       setEscrowFunded(!!data.escrowFunded);
+      setEscrowRemaining(Number(data.escrowRemaining || 0));
+      setTotalReleased(Number(data.totalReleased || 0));
+      setHasPaidInvoice(!!data.hasPaidInvoice);
     } catch (err) {
       console.error('Failed to load workstream offers:', err);
     }
@@ -51,6 +60,9 @@ export function useWorkstreamOffers(orderId: string | undefined, refreshKey?: st
   useEffect(() => {
     setOffers([]);
     setEscrowFunded(false);
+    setEscrowRemaining(0);
+    setTotalReleased(0);
+    setHasPaidInvoice(false);
     refresh();
   }, [orderId, refresh]);
 
@@ -71,9 +83,22 @@ export function useWorkstreamOffers(orderId: string | undefined, refreshKey?: st
   };
 
   const createOffer = (input: CreateOfferInput) =>
-    request(`/api/orders/${orderId}/offers`, input);
+    request(`/api/orders/${orderId}/offers`, { ...input, deliverWork: input.kind === 'invoice' ? true : input.deliverWork });
   const respond = (offerId: string, action: 'accept' | 'decline' | 'cancel') =>
     request(`/api/offers/${offerId}/${action}`);
+  const refundEscrow = (reason: string) =>
+    request('/api/payments/escrow/refund', { orderId, reason });
 
-  return { offers, currencySymbol, escrowFunded, createOffer, respond, refresh };
+  return {
+    offers,
+    currencySymbol,
+    escrowFunded,
+    escrowRemaining,
+    totalReleased,
+    hasPaidInvoice,
+    createOffer,
+    respond,
+    refundEscrow,
+    refresh
+  };
 }

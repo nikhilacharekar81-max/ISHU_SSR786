@@ -405,7 +405,165 @@ async function runTests() {
   assert.strictEqual(orderCCheck.json.amount, 600);
   console.log('✅ Test 10: 1 Project -> Multiple Proposals -> Multiple Accepted Freelancers -> Independent USD Workstreams verified');
 
-  console.log('\n🎉 ALL 10 PATCH VERIFICATION TESTS PASSED SUCCESSFULLY!');
+  // 11. PEOPLEPERHOUR GIG WORKSTREAM LIFECYCLE:
+  // Buyer orders Gig -> Seller locked from sending Proposal -> Seller delivers & raises Invoice ->
+  // Buyer pays Invoice -> Seller wallet credited -> Mutual Buyer & Seller Reviews ->
+  // WorkStream remains open for chat -> Seller unlocked to send Follow-on Proposal -> Buyer funds & pays 2nd Invoice
+  await api('/api/wallet/deposit', { method: 'POST', token: buyerToken, body: { amount: 5000 } });
+  const pphGigOrderRes = await api('/api/orders', {
+    method: 'POST',
+    token: buyerToken,
+    body: {
+      title: gigA.title,
+      sellerId: gigA.freelancerId,
+      amount: gigA.price,
+      gigId: gigA.id
+    }
+  });
+  assert.strictEqual(pphGigOrderRes.status, 201, 'PeoplePerHour Gig order created');
+  const pphOrder = pphGigOrderRes.json;
+
+  // Step 11a: Seller cannot send a new Proposal while initial Gig escrow is active & first invoice is unpaid
+  const blockedProposalRes = await api(`/api/orders/${pphOrder.id}/offers`, {
+    method: 'POST',
+    token: sellerBToken,
+    body: {
+      kind: 'proposal',
+      title: 'Premature Extra Scope Proposal',
+      amount: 200,
+      deliveryDays: 3,
+      note: 'Attempting proposal before first invoice is paid'
+    }
+  });
+  assert.strictEqual(blockedProposalRes.status, 409, 'Seller must be blocked from sending a new Proposal on a Gig before the first invoice is paid');
+
+  // Step 11b: Seller raises Invoice with deliverable attachments (deliverWork: true)
+  const sellerWalletBeforePph = (await api(`/api/payments/user/${gigA.freelancerId}`, { token: sellerBToken })).json;
+  const raiseInvRes = await api(`/api/orders/${pphOrder.id}/offers`, {
+    method: 'POST',
+    token: sellerBToken,
+    body: {
+      kind: 'invoice',
+      title: `Invoice for ${gigA.title}`,
+      amount: gigA.price,
+      note: 'Here is the completed design system and source files.',
+      reference: 'https://figma.com/file/example-design-system',
+      files: [{ name: 'design-system-v1.fig', size: '4.2 MB', url: 'https://figma.com/file/example-design-system' }],
+      deliverWork: true
+    }
+  });
+  assert.strictEqual(raiseInvRes.status, 201, 'Seller raises first Invoice with deliverables');
+  const firstInvoice = raiseInvRes.json.offer;
+  assert.strictEqual(raiseInvRes.json.order.status, 'delivered', 'Raising invoice with deliverables transitions order to delivered');
+
+  // Step 11c: Buyer pays the first Invoice -> money credited to Seller's wallet
+  const payFirstInvRes = await api(`/api/offers/${firstInvoice.id}/accept`, {
+    method: 'POST',
+    token: buyerToken
+  });
+  assert.strictEqual(payFirstInvRes.status, 200, 'Buyer pays first Invoice');
+  assert.strictEqual(payFirstInvRes.json.offer.status, 'paid');
+  assert.strictEqual(payFirstInvRes.json.order.hasPaidInvoice, true, 'Order must mark hasPaidInvoice = true');
+  const sellerWalletAfterFirst = (await api(`/api/payments/user/${gigA.freelancerId}`, { token: sellerBToken })).json;
+  assert.ok(
+    sellerWalletAfterFirst.availableBalance > sellerWalletBeforePph.availableBalance,
+    'Seller wallet must be credited when first invoice is paid'
+  );
+
+  // Step 11d: Both Buyer and Seller leave mutual reviews for each other
+  const buyerRevRes = await api('/api/reviews', {
+    method: 'POST',
+    token: buyerToken,
+    body: {
+      orderId: pphOrder.id,
+      gigId: gigA.id,
+      targetUserId: gigA.freelancerId,
+      rating: 5,
+      comment: 'Outstanding work from Elena on the initial Gig!'
+    }
+  });
+  assert.strictEqual(buyerRevRes.status, 201, 'Buyer review of Seller must succeed');
+
+  const sellerRevRes = await api('/api/reviews', {
+    method: 'POST',
+    token: sellerBToken,
+    body: {
+      orderId: pphOrder.id,
+      gigId: gigA.id,
+      targetUserId: 'user_1',
+      rating: 5,
+      comment: 'Great buyer, clear brief and fast invoice payment!'
+    }
+  });
+  assert.strictEqual(sellerRevRes.status, 201, 'Seller review of Buyer must succeed');
+
+  const orderWithReviews = (await api(`/api/orders/${pphOrder.id}`, { token: buyerToken })).json;
+  assert.ok(orderWithReviews.review && orderWithReviews.review.rating === 5, 'Order must include Buyer review');
+  assert.ok(orderWithReviews.sellerReview && orderWithReviews.sellerReview.rating === 5, 'Order must include Seller review');
+
+  // Step 11e: WorkStream remains open to continue chat between Seller and Buyer
+  const chatAfterCompleteRes = await api('/api/messages', {
+    method: 'POST',
+    token: buyerToken,
+    body: {
+      orderId: pphOrder.id,
+      text: 'Can we also add a dark mode token set as phase 2?',
+      type: 'text'
+    }
+  });
+  assert.strictEqual(chatAfterCompleteRes.status, 200, 'WorkStream must remain open for chat after invoice payment');
+
+  // Step 11f: Now that the first invoice is paid, Seller CAN raise a follow-on Proposal in the same WorkStream!
+  const followOnPropRes = await api(`/api/orders/${pphOrder.id}/offers`, {
+    method: 'POST',
+    token: sellerBToken,
+    body: {
+      kind: 'proposal',
+      title: 'Phase 2: Dark Mode Token System',
+      amount: 250,
+      deliveryDays: 3,
+      note: 'Follow-on proposal after first invoice paid'
+    }
+  });
+  assert.strictEqual(followOnPropRes.status, 201, 'Seller must be able to raise a follow-on Proposal after first invoice is paid');
+  const followOnProp = followOnPropRes.json.offer;
+
+  // Step 11g: Buyer accepts the follow-on Proposal -> funds new Escrow on the SAME WorkStream
+  const acceptFollowOnRes = await api(`/api/offers/${followOnProp.id}/accept`, {
+    method: 'POST',
+    token: buyerToken
+  });
+  assert.strictEqual(acceptFollowOnRes.status, 200, 'Buyer accepts follow-on Proposal');
+  assert.strictEqual(acceptFollowOnRes.json.order.id, pphOrder.id, 'Follow-on Proposal stays in the same WorkStream');
+  assert.strictEqual(acceptFollowOnRes.json.order.status, 'funded_in_escrow');
+  assert.strictEqual(acceptFollowOnRes.json.order.escrowRemaining, 250, 'New $250 escrow is held in the WorkStream');
+
+  // Step 11h: Seller raises 2nd Invoice for Phase 2 and Buyer pays it -> Seller wallet credited again!
+  const secondInvRes = await api(`/api/orders/${pphOrder.id}/offers`, {
+    method: 'POST',
+    token: sellerBToken,
+    body: {
+      kind: 'invoice',
+      title: 'Invoice for Phase 2: Dark Mode Token System',
+      amount: 250,
+      note: 'Phase 2 dark mode tokens delivered.',
+      deliverWork: true
+    }
+  });
+  assert.strictEqual(secondInvRes.status, 201, 'Seller raises second Invoice');
+  const paySecondInvRes = await api(`/api/offers/${secondInvRes.json.offer.id}/accept`, {
+    method: 'POST',
+    token: buyerToken
+  });
+  assert.strictEqual(paySecondInvRes.status, 200, 'Buyer pays second Invoice');
+  const sellerWalletAfterSecond = (await api(`/api/payments/user/${gigA.freelancerId}`, { token: sellerBToken })).json;
+  assert.ok(
+    sellerWalletAfterSecond.availableBalance > sellerWalletAfterFirst.availableBalance,
+    'Seller wallet must be credited again after second invoice payment'
+  );
+  console.log('✅ Test 11: PeoplePerHour Gig WorkStream (Proposal lock -> Invoice delivery & payment -> Mutual reviews -> Open chat -> Follow-on Proposal & 2nd Invoice) verified!');
+
+  console.log('\n🎉 ALL 11 PATCH VERIFICATION TESTS PASSED SUCCESSFULLY!');
   restoreData();
   process.exit(0);
 }

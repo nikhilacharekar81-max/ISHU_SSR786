@@ -1,23 +1,38 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   Send, Paperclip, Video, FileSignature, Receipt, ChevronDown,
-  MessageSquare, Lock, ShieldCheck, Loader2
+  MessageSquare, Lock, ShieldCheck, Loader2, FileText, Link as LinkIcon, RotateCcw
 } from 'lucide-react';
 import { uploadWorkstreamFile } from '../../utils/workstreamUpload';
 import { WorkstreamOfferKind } from './types';
 
-type ComposerTab = 'message' | WorkstreamOfferKind;
+type ComposerTab = 'message' | WorkstreamOfferKind | 'refund';
 
 interface WorkstreamMessageInputProps {
   onSendMessage: (text: string) => void;
   onAttachFile: (file: { name: string; size: string; url: string }) => void;
   onStartVideoCall?: () => void;
   /** Creates a real proposal / invoice / deposit request on the server. */
-  onCreateOffer?: (input: { kind: WorkstreamOfferKind; title: string; amount: number; deliveryDays?: number; note?: string }) => Promise<{ ok: boolean; error?: string }>;
-  /** Seller of a workstream whose escrow is not funded yet: may send a proposal or deposit request. */
+  onCreateOffer?: (input: {
+    kind: WorkstreamOfferKind;
+    title: string;
+    amount: number;
+    deliveryDays?: number;
+    note?: string;
+    reference?: string;
+    files?: Array<{ name: string; size: string; url: string }>;
+  }) => Promise<{ ok: boolean; error?: string }>;
+  /** Seller voluntary escrow refund back to buyer wallet (PeoplePerHour "Issue Refund"). */
+  onRefundEscrow?: (reason: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Seller may send a proposal or deposit request (unfunded inquiry/project, or after first invoice is paid). */
   canSendProposal?: boolean;
-  /** Seller of a funded workstream: may bill follow-on work. */
+  /** Seller of a funded workstream: may raise an invoice to release escrow or bill follow-on work. */
   canRaiseInvoice?: boolean;
+  /** Seller of an active funded workstream: may voluntarily refund escrow back to the buyer. */
+  canRefundEscrow?: boolean;
+  defaultInvoiceAmount?: number;
+  defaultInvoiceTitle?: string;
+  isGigOrder?: boolean;
   proposalHint?: string;
   invoiceHint?: string;
   currencySymbol?: string;
@@ -34,8 +49,13 @@ export const WorkstreamMessageInput: React.FC<WorkstreamMessageInputProps> = ({
   onAttachFile,
   onStartVideoCall,
   onCreateOffer,
+  onRefundEscrow,
   canSendProposal = false,
   canRaiseInvoice = false,
+  canRefundEscrow = false,
+  defaultInvoiceAmount = 0,
+  defaultInvoiceTitle = '',
+  isGigOrder = false,
   proposalHint = 'Not available for this workstream',
   invoiceHint = 'Not available for this workstream',
   currencySymbol = '$',
@@ -47,12 +67,16 @@ export const WorkstreamMessageInput: React.FC<WorkstreamMessageInputProps> = ({
   const [enterToSend, setEnterToSend] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const invoiceFileInputRef = useRef<HTMLInputElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
 
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
   const [days, setDays] = useState('');
   const [note, setNote] = useState('');
+  const [reference, setReference] = useState('');
+  const [invoiceFiles, setInvoiceFiles] = useState<Array<{ name: string; size: string; url: string }>>([]);
+  const [refundReason, setRefundReason] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -65,12 +89,25 @@ export const WorkstreamMessageInput: React.FC<WorkstreamMessageInputProps> = ({
     return () => document.removeEventListener('mousedown', onDown);
   }, [moreOpen]);
 
-  const resetForm = () => { setTitle(''); setAmount(''); setDays(''); setNote(''); setFormError(null); };
+  const resetForm = () => {
+    setTitle('');
+    setAmount('');
+    setDays('');
+    setNote('');
+    setReference('');
+    setInvoiceFiles([]);
+    setRefundReason('');
+    setFormError(null);
+  };
 
   const switchTab = (next: ComposerTab) => {
     setTab(next);
     setMoreOpen(false);
     setFormError(null);
+    if (next === 'invoice') {
+      if (!amount && defaultInvoiceAmount > 0) setAmount(String(defaultInvoiceAmount));
+      if (!title && defaultInvoiceTitle) setTitle(`Final Invoice: ${defaultInvoiceTitle}`.slice(0, 120));
+    }
   };
 
   const submitMessage = () => {
@@ -96,13 +133,31 @@ export const WorkstreamMessageInput: React.FC<WorkstreamMessageInputProps> = ({
       onAttachFile(result);
     } catch (err) {
       console.error('File upload failed:', err);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleInvoiceFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const result = await uploadWorkstreamFile(file);
+      setInvoiceFiles(prev => [...prev, result]);
+    } catch (err: any) {
+      setFormError(err?.message || 'File upload failed.');
+    } finally {
+      if (invoiceFileInputRef.current) invoiceFileInputRef.current.value = '';
     }
   };
 
   const submitOffer = async () => {
-    if (tab === 'message' || !onCreateOffer || submitting) return;
+    if (tab === 'message' || tab === 'refund' || !onCreateOffer || submitting) return;
     const amt = Number(amount);
     if (!Number.isFinite(amt) || amt <= 0) return setFormError(`Enter an amount greater than ${currencySymbol}0.`);
+    if (tab === 'invoice' && defaultInvoiceAmount > 0 && amt < defaultInvoiceAmount) {
+      return setFormError(`Invoice amount cannot be less than the funded escrow amount (${currencySymbol}${defaultInvoiceAmount.toLocaleString()}).`);
+    }
     if (tab !== 'deposit' && title.trim().length < 3) {
       return setFormError(tab === 'proposal' ? 'Add a proposal title (at least 3 characters).' : 'Add a description for the invoice (at least 3 characters).');
     }
@@ -113,13 +168,29 @@ export const WorkstreamMessageInput: React.FC<WorkstreamMessageInputProps> = ({
     setFormError(null);
     const result = await onCreateOffer({
       kind: tab,
-      title: title.trim(),
+      title: tab === 'deposit' ? (title.trim() || 'Escrow deposit') : title.trim(),
       amount: amt,
       deliveryDays: tab === 'proposal' ? d : undefined,
-      note: note.trim() || undefined
+      note: note.trim() || undefined,
+      reference: tab === 'invoice' && reference.trim() ? reference.trim() : undefined,
+      files: tab === 'invoice' && invoiceFiles.length > 0 ? invoiceFiles : undefined
     });
     setSubmitting(false);
     if (!result.ok) return setFormError(result.error || 'Could not send. Please try again.');
+    resetForm();
+    setTab('message');
+  };
+
+  const submitRefund = async () => {
+    if (!onRefundEscrow || submitting) return;
+    if (refundReason.trim().length < 5) {
+      return setFormError('Please provide a reason for the refund (at least 5 characters).');
+    }
+    setSubmitting(true);
+    setFormError(null);
+    const result = await onRefundEscrow(refundReason.trim());
+    setSubmitting(false);
+    if (!result.ok) return setFormError(result.error || 'Could not issue refund.');
     resetForm();
     setTab('message');
   };
@@ -135,17 +206,18 @@ export const WorkstreamMessageInput: React.FC<WorkstreamMessageInputProps> = ({
 
   const proposalOff = !canSendProposal || disabled || !onCreateOffer;
   const invoiceOff = !canRaiseInvoice || disabled || !onCreateOffer;
+  const refundOff = !canRefundEscrow || disabled || !onRefundEscrow;
 
   const headings: Record<WorkstreamOfferKind, { title: string; hint: string; icon: React.ReactNode }> = {
     proposal: { title: 'New Proposal', hint: 'Set the scope, price and delivery time. The buyer accepts it and pays into escrow.', icon: <FileSignature className="w-4 h-4 text-emerald-600" /> },
-    invoice: { title: 'Invoice', hint: 'Bill follow-on work or milestones once escrow is funded.', icon: <Receipt className="w-4 h-4 text-emerald-600" /> },
+    invoice: { title: 'Raise an Invoice & Deliver Work', hint: 'Attach deliverables and submit your invoice to release escrow funds into your wallet.', icon: <Receipt className="w-4 h-4 text-emerald-600" /> },
     deposit: { title: 'Request Deposit', hint: 'Ask the buyer to fund escrow before you start.', icon: <Lock className="w-4 h-4 text-emerald-600" /> }
   };
 
   return (
     <div className="p-4 sm:p-5 bg-white border-t border-slate-100">
       <div className="bg-slate-50 border border-slate-200 rounded-2xl">
-        <div className="flex items-stretch border-b border-slate-200 rounded-t-2xl overflow-visible">
+        <div className="flex items-stretch border-b border-slate-200 rounded-t-2xl overflow-visible flex-wrap">
           <button type="button" onClick={() => switchTab('message')} className={tabBtn(tab === 'message') + ' rounded-tl-2xl'}>
             <MessageSquare className="w-3.5 h-3.5" /> Send Message
           </button>
@@ -154,27 +226,32 @@ export const WorkstreamMessageInput: React.FC<WorkstreamMessageInputProps> = ({
             <Video className="w-3.5 h-3.5" /> Video Call
           </button>
 
-          <button type="button" disabled={proposalOff} title={proposalOff ? proposalHint : undefined}
+          <button type="button" disabled={proposalOff} title={proposalOff ? proposalHint : 'Send a Proposal'}
             onClick={() => switchTab('proposal')} className={tabBtn(tab === 'proposal', proposalOff)}>
             <FileSignature className="w-3.5 h-3.5" /> New Proposal
           </button>
 
-          <button type="button" disabled={invoiceOff} title={invoiceOff ? invoiceHint : undefined}
+          <button type="button" disabled={invoiceOff} title={invoiceOff ? invoiceHint : 'Raise an Invoice'}
             onClick={() => switchTab('invoice')} className={tabBtn(tab === 'invoice', invoiceOff)}>
-            <Receipt className="w-3.5 h-3.5" /> Invoice
+            <Receipt className="w-3.5 h-3.5" /> Raise Invoice
           </button>
 
           <div className="relative" ref={moreRef}>
-            <button type="button" onClick={() => setMoreOpen(o => !o)} className={tabBtn(tab === 'deposit' || moreOpen)}
+            <button type="button" onClick={() => setMoreOpen(o => !o)} className={tabBtn(tab === 'deposit' || tab === 'refund' || moreOpen)}
               aria-haspopup="menu" aria-expanded={moreOpen}>
               More <ChevronDown className={`w-3 h-3 transition-transform ${moreOpen ? 'rotate-180' : ''}`} />
             </button>
             {moreOpen && (
-              <div role="menu" className="absolute left-0 top-full mt-1 z-30 w-48 bg-white border border-slate-200 rounded-xl shadow-lg py-1.5">
+              <div role="menu" className="absolute left-0 top-full mt-1 z-30 w-52 bg-white border border-slate-200 rounded-xl shadow-lg py-1.5">
                 <button type="button" role="menuitem" disabled={proposalOff} title={proposalOff ? proposalHint : undefined}
                   onClick={() => switchTab('deposit')}
                   className={`w-full px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider flex items-center gap-2 text-left ${proposalOff ? 'text-slate-300 cursor-not-allowed' : 'text-slate-600 hover:bg-emerald-50 hover:text-emerald-700 cursor-pointer'}`}>
                   <Lock className="w-3.5 h-3.5" /> Request Deposit
+                </button>
+                <button type="button" role="menuitem" disabled={refundOff} title={refundOff ? 'Only the seller of an active funded workstream can issue an escrow refund' : undefined}
+                  onClick={() => switchTab('refund')}
+                  className={`w-full px-3.5 py-2 text-[11px] font-bold uppercase tracking-wider flex items-center gap-2 text-left ${refundOff ? 'text-slate-300 cursor-not-allowed' : 'text-rose-600 hover:bg-rose-50 cursor-pointer'}`}>
+                  <RotateCcw className="w-3.5 h-3.5" /> Issue Escrow Refund
                 </button>
               </div>
             )}
@@ -217,6 +294,43 @@ export const WorkstreamMessageInput: React.FC<WorkstreamMessageInputProps> = ({
               </button>
             </div>
           </form>
+        ) : tab === 'refund' ? (
+          <div className="p-4 sm:p-5 space-y-4 bg-white rounded-b-2xl">
+            <div className="flex items-start gap-2.5">
+              <span className="p-2 bg-rose-50 rounded-xl shrink-0"><RotateCcw className="w-4 h-4 text-rose-600" /></span>
+              <div>
+                <h4 className="text-sm font-bold text-fiverr-dark">Issue Escrow Refund to Buyer</h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Refund the active escrow balance ({currencySymbol}{defaultInvoiceAmount.toLocaleString()}) back to the buyer's wallet and close this order.
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <label className={labelCls}>Reason for Refund</label>
+              <textarea
+                value={refundReason}
+                onChange={(e) => setRefundReason(e.target.value)}
+                rows={3}
+                maxLength={500}
+                className={inputCls + ' resize-none leading-relaxed'}
+                placeholder="Explain why you are issuing a full refund of the escrow deposit..."
+              />
+            </div>
+
+            {formError && <p className="text-[11px] font-semibold text-rose-600">{formError}</p>}
+
+            <div className="flex items-center justify-end gap-2">
+              <button type="button" onClick={() => { resetForm(); setTab('message'); }} disabled={submitting}
+                className="px-4 py-2.5 text-xs font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition cursor-pointer">
+                Cancel
+              </button>
+              <button type="button" onClick={submitRefund} disabled={submitting || disabled}
+                className="px-6 py-2.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white font-bold rounded-xl text-xs uppercase tracking-wider flex items-center gap-2 shadow-xs transition cursor-pointer">
+                {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />} Confirm Refund
+              </button>
+            </div>
+          </div>
         ) : (
           <div className="p-4 sm:p-5 space-y-4 bg-white rounded-b-2xl">
             <div className="flex items-start gap-2.5">
@@ -227,11 +341,12 @@ export const WorkstreamMessageInput: React.FC<WorkstreamMessageInputProps> = ({
               </div>
             </div>
 
-            {tab === 'invoice' && (
-              <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-2xl text-[11px] text-amber-800 flex items-start gap-2">
-                <Receipt className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            {tab === 'invoice' && defaultInvoiceAmount > 0 && (
+              <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-2xl text-[11px] text-emerald-900 flex items-start gap-2">
+                <Receipt className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-bold">Gig Invoice Policy:</span> Final invoices for gig-based orders must equal or exceed the funded gig price. Sellers cannot raise an invoice for less than the gig price or edit it below this threshold.
+                  <span className="font-bold">{isGigOrder ? 'Gig Escrow Policy:' : 'Escrow Coverage:'}</span>{' '}
+                  {currencySymbol}{defaultInvoiceAmount.toLocaleString()} is currently held in escrow. When the buyer pays this invoice, the funds are released directly to your wallet.
                 </div>
               </div>
             )}
@@ -239,9 +354,9 @@ export const WorkstreamMessageInput: React.FC<WorkstreamMessageInputProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {tab !== 'deposit' && (
                 <div className="sm:col-span-2">
-                  <label className={labelCls}>{tab === 'proposal' ? 'Proposal title' : 'Description'}</label>
+                  <label className={labelCls}>{tab === 'proposal' ? 'Proposal title' : 'Invoice Description'}</label>
                   <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={120} className={inputCls}
-                    placeholder={tab === 'proposal' ? 'e.g. Facebook page growth — 150 followers' : 'e.g. Follow-on work — extra revisions'} />
+                    placeholder={tab === 'proposal' ? 'e.g. Full-stack feature milestone — Phase 2' : 'e.g. Final Invoice — Completed deliverables'} />
                 </div>
               )}
               <div>
@@ -254,18 +369,62 @@ export const WorkstreamMessageInput: React.FC<WorkstreamMessageInputProps> = ({
                   <input value={days} onChange={(e) => setDays(e.target.value)} inputMode="numeric" className={inputCls} placeholder="e.g. 5" />
                 </div>
               )}
+              {tab === 'invoice' && (
+                <div>
+                  <label className={labelCls}>Live Link / Reference URL (Optional)</label>
+                  <div className="relative">
+                    <input value={reference} onChange={(e) => setReference(e.target.value)} className={inputCls} placeholder="https://..." />
+                  </div>
+                </div>
+              )}
               <div className="sm:col-span-2">
-                <label className={labelCls}>Note (optional)</label>
+                <label className={labelCls}>{tab === 'invoice' ? 'Delivery Notes & Breakdown' : 'Note (optional)'}</label>
                 <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} maxLength={1000}
-                  className={inputCls + ' resize-none leading-relaxed'} placeholder="Add scope, terms or anything the buyer should know..." />
+                  className={inputCls + ' resize-none leading-relaxed'}
+                  placeholder={tab === 'invoice' ? 'Describe the completed work and deliverables included with this invoice...' : 'Add scope, terms or anything the buyer should know...'} />
               </div>
+
+              {tab === 'invoice' && (
+                <div className="sm:col-span-2 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className={labelCls + ' mb-0'}>Attached Deliverables ({invoiceFiles.length})</span>
+                    <input type="file" ref={invoiceFileInputRef} onChange={handleInvoiceFileChange} className="hidden" />
+                    <button
+                      type="button"
+                      onClick={() => invoiceFileInputRef.current?.click()}
+                      className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-[11px] font-bold text-emerald-700 flex items-center gap-1.5 transition cursor-pointer"
+                    >
+                      <Paperclip className="w-3.5 h-3.5" /> Attach Deliverable File
+                    </button>
+                  </div>
+                  {invoiceFiles.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {invoiceFiles.map((f, idx) => (
+                        <div key={idx} className="inline-flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+                          <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                          <span className="font-bold text-fiverr-dark">{f.name}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">({f.size})</span>
+                          <button
+                            type="button"
+                            onClick={() => setInvoiceFiles(prev => prev.filter((_, i) => i !== idx))}
+                            className="text-slate-400 hover:text-rose-600 font-bold cursor-pointer"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {formError && <p className="text-[11px] font-semibold text-rose-600">{formError}</p>}
 
             <div className="flex items-center justify-between gap-3">
               <p className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" /> The buyer pays into escrow when they accept.
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                {tab === 'invoice' ? 'When the buyer pays this invoice, funds are credited to your wallet.' : 'The buyer pays into escrow when they accept.'}
               </p>
               <div className="flex items-center gap-2">
                 <button type="button" onClick={() => { resetForm(); setTab('message'); }} disabled={submitting}
@@ -274,7 +433,8 @@ export const WorkstreamMessageInput: React.FC<WorkstreamMessageInputProps> = ({
                 </button>
                 <button type="button" onClick={submitOffer} disabled={submitting || disabled}
                   className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl text-xs uppercase tracking-wider flex items-center gap-2 shadow-xs transition cursor-pointer">
-                  {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send
+                  {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                  {tab === 'invoice' ? 'Send Invoice' : 'Send'}
                 </button>
               </div>
             </div>

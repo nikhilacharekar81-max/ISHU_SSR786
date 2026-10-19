@@ -1327,6 +1327,22 @@ interface UserEmail {
 }
 
 
+function notifyUser(message: Message, targetUserId: string) {
+  const payload = JSON.stringify({ type: 'MESSAGE_RECEIVED', message });
+  for (const client of clients) {
+    const clientUserId = (client as any).authenticatedUserId;
+    const clientUser = users.find(u => u.id === clientUserId);
+    const isAuthorized = clientUser && (
+      ['admin', 'super_admin', 'support'].includes(clientUser.role) ||
+      clientUserId === targetUserId
+    );
+    
+    if (isAuthorized && client.readyState === WebSocket.OPEN) {
+      client.send(payload);
+    }
+  }
+}
+
 function notifyUserOnAdminAction(user: User, action: 'suspended' | 'restricted' | 'deactivated' | 'impersonated', notes?: string) {
   const timestamp = new Date().toLocaleString();
   const timeShort = new Date().toISOString();
@@ -1367,7 +1383,6 @@ function notifyUserOnAdminAction(user: User, action: 'suspended' | 'restricted' 
   userEmails.unshift(newEmail);
 
   // 2. Add System Chat Message into User's Support Thread
-  // 2. Add System Chat Message into User's Support Thread
   const supportOrderId = `support_admin_${user.id}`;
   const newChatMsg: Message = {
     id: 'msg_' + Date.now() + Math.random().toString(36).substring(2, 5),
@@ -1375,27 +1390,13 @@ function notifyUserOnAdminAction(user: User, action: 'suspended' | 'restricted' 
     senderId: 'user-admin',
     senderName: 'WorkSphere Admin & Support Desk',
     text: chatText,
-    timestamp: timeShort
+    timestamp: timeShort,
+    type: 'system',
+    metadata: { action: `admin_${action}` }
   };
   recordMessage(newChatMsg);
+  saveMessagesToDisk();
 
-function notifyUser(message: Message, targetUserId: string) {
-  const payload = JSON.stringify({ type: 'MESSAGE_RECEIVED', message });
-  for (const client of clients) {
-    const clientUserId = (client as any).authenticatedUserId;
-    const clientUser = users.find(u => u.id === clientUserId);
-    const isAuthorized = clientUser && (
-      ['admin', 'super_admin', 'support'].includes(clientUser.role) ||
-      clientUserId === targetUserId
-    );
-    
-    if (isAuthorized && client.readyState === WebSocket.OPEN) {
-      client.send(payload);
-    }
-  }
-}
-
-// ... somewhere ...
   // 3. Broadcast WS message
   try {
     notifyUser(newChatMsg, user.id);
@@ -1587,6 +1588,7 @@ const REVIEWS_FILE = path.join(DATA_DIR, 'workstream_reviews.json');
 const REFUNDS_FILE = path.join(DATA_DIR, 'workstream_refunds.json');
 const DISPUTES_FILE = path.join(DATA_DIR, 'workstream_disputes.json');
 const PROPOSALS_FILE = path.join(DATA_DIR, 'workstream_proposals.json');
+const PAYOUTS_FILE = path.join(DATA_DIR, 'workstream_payouts.json');
 const UPLOAD_INDEX_FILE = path.join(DATA_DIR, 'workstream_uploads.json'); // Added for completeness
 
 function ensureDataDirectory() {
@@ -1623,6 +1625,7 @@ export function saveReviewsToDisk() { writeJsonAtomic(REVIEWS_FILE, reviews); }
 export function saveRefundsToDisk() { writeJsonAtomic(REFUNDS_FILE, refunds); }
 export function saveDisputesToDisk() { writeJsonAtomic(DISPUTES_FILE, disputes); }
 export function saveProposalsToDisk() { writeJsonAtomic(PROPOSALS_FILE, proposals); }
+export function savePayoutsToDisk() { writeJsonAtomic(PAYOUTS_FILE, payouts); }
 export function saveWorkstreamUploadIndex() { writeJsonAtomic(WORKSTREAM_UPLOAD_INDEX_FILE, workstreamUploadIndex); }
 
 function handleCorruption(filePath: string, error: any) {
@@ -1793,6 +1796,19 @@ function loadInitialOrdersAndMessages() {
     }
   }
 
+  // 7. Load Payouts
+  if (fs.existsSync(PAYOUTS_FILE)) {
+    try {
+      const data = fs.readFileSync(PAYOUTS_FILE, 'utf-8');
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed)) {
+        payouts = parsed;
+      }
+    } catch (e) {
+      console.error('Failed to load payouts file:', e);
+    }
+  }
+
   // One-time migration & Index Population
   let messagesMigrated = false;
   for (const msg of messages) {
@@ -1879,8 +1895,27 @@ function enrichOrderWithServiceInfo(o: Order, isAdmin: boolean = false) {
     }
   }
 
+  const buyerReview = o.review && (!o.review.reviewerId || o.review.reviewerId === o.buyerId)
+    ? o.review
+    : reviews.find(r => r.orderId === o.id && r.reviewerId === o.buyerId);
+  const sellerReview = (o as any).sellerReview || reviews.find(r => r.orderId === o.id && r.reviewerId === o.sellerId);
+  const esc = financeLedger.getEscrow(o.id);
+  const escrowRemaining = esc ? esc.remaining : (o.status === 'completed' || o.status === 'cancelled' ? 0 : Number(o.amount || 0));
+  const totalReleased = esc ? esc.releasedGross : (o.status === 'completed' ? Number(o.amount || 0) : 0);
+  const hasPaidInvoice = Boolean(
+    o.status === 'completed' ||
+    releaseCompletedOrders.has(o.id) ||
+    (esc && esc.releasedGross > 0) ||
+    (typeof workstreamOffers !== 'undefined' && Array.isArray(workstreamOffers) && workstreamOffers.some(of => of.orderId === o.id && of.kind === 'invoice' && of.status === 'paid'))
+  );
+
   const base = {
     ...o,
+    ...(buyerReview ? { review: buyerReview } : {}),
+    ...(sellerReview ? { sellerReview } : {}),
+    escrowRemaining,
+    totalReleased,
+    hasPaidInvoice,
     gigId: o.gigId || gig?.id,
     projectId: o.projectId || project?.id,
     sellerUsername,
@@ -2257,17 +2292,16 @@ function fundOrderEscrowWithEvent(params: { orderId: string; orderTitle: string;
   const res = financeLedger.fundEscrow(params);
   const order = orderIndex.get(params.orderId) || orders.find(o => o.id === params.orderId);
   if (order) {
-    const sysMsg: Message = {
-      id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-      orderId: order.id,
-      senderId: 'system',
-      senderName: 'WorkSphere Escrow Desk',
-      text: 'Your payment is safely held in escrow.',
-      timestamp: new Date().toISOString(),
-      type: 'system',
-      metadata: { action: 'escrow_funded', amount: params.amount }
-    };
-    emitSystemEvent(order.id, 'escrow_funded', 'Your payment is safely held in escrow.', { amount: params.amount });
+    emitSystemEvent(order.id, 'escrow_funded', `🔒 Escrow funded ($${params.amount.toLocaleString()}). Your payment is safely held in escrow.`, { amount: params.amount });
+  }
+  return res;
+}
+
+function topUpOrderEscrowWithEvent(params: { orderId: string; orderTitle: string; amount: number; buyerId: string; sellerId: string; actor: string; skipMinimum?: boolean }) {
+  const res = financeLedger.topUpEscrow(params);
+  const order = orderIndex.get(params.orderId) || orders.find(o => o.id === params.orderId);
+  if (order) {
+    emitSystemEvent(order.id, 'escrow_funded', `🔒 Additional $${params.amount.toLocaleString()} funded into escrow for "${params.orderTitle}".`, { amount: params.amount, isTopUp: true });
   }
   return res;
 }
@@ -2286,7 +2320,6 @@ function releaseOrderFunds(order: Order, actor: string, reason: string, requestK
   }
   assertOrderOpen(order);
   const result = financeLedger.releaseEscrow({ orderId: order.id, actor, reason, requestKey });
-  emitSystemEvent(order.id, 'escrow_released', 'The payment has been released.');
 
   order.status = 'completed';
   if (!order.completedAt) {
@@ -2295,22 +2328,30 @@ function releaseOrderFunds(order: Order, actor: string, reason: string, requestK
   if (Array.isArray(order.deliveryHistory) && order.deliveryHistory.length > 0) {
     order.acceptedVersion = order.deliveryHistory[order.deliveryHistory.length - 1].version;
   }
-  emitSystemEvent(order.id, 'order_completed', 'Your order is complete.');
 
   const seller = users.find(u => u.id === order.sellerId);
   if (seller && !releaseCompletedOrders.has(order.id)) {
     releaseCompletedOrders.add(order.id);
     seller.earned = (seller.earned || 0) + result.freelancerNet;
     seller.completedJobs = (seller.completedJobs || 0) + 1;
-    emitSystemEvent(order.id, 'wallet_credited', 'The seller has been paid.');
   }
   syncUserBalances();
   saveOrdersToDisk();
 
-  // If this was a buyer-triggered approval, emit deliverable_approved
+  // If this was a buyer-triggered approval, emit deliverable_approved first
   if (reason === 'Buyer approved work') {
-    emitSystemEvent(order.id, 'deliverable_approved', 'Deliverable approved by buyer.', { freelancerNet: result.freelancerNet });
+    emitSystemEvent(order.id, 'deliverable_approved', `✅ Deliverables approved by buyer.`, {
+      freelancerNet: result.freelancerNet,
+      acceptedVersion: order.acceptedVersion
+    });
   }
+
+  emitSystemEvent(order.id, 'escrow_released', `🎉 Escrow funds ($${order.amount.toLocaleString()}) released to seller! Workstream marked as completed.`, {
+    amount: order.amount,
+    freelancerNet: result.freelancerNet,
+    platformFee: result.platformFee,
+    orderCompleted: true
+  });
 
   if (requestKey) requestKeyCache.set(requestKey, result);
   return result;
@@ -2353,10 +2394,10 @@ function refundOrderFunds(order: Order, amount: number | undefined, actor: strin
   saveOrdersToDisk();
   saveRefundsToDisk();
 
-  emitSystemEvent(order.id, 'escrow_refunded', `💸 Escrow refunded ($${result.refunded}) to buyer. Reason: ${reason}`, { refunded: result.refunded });
-  if (order.status === 'cancelled') {
-    emitSystemEvent(order.id, 'order_cancelled', 'Order has been cancelled.');
-  }
+  emitSystemEvent(order.id, 'escrow_refunded', `💸 Escrow refunded ($${result.refunded.toLocaleString()}) to buyer wallet. Reason: ${reason}`, {
+    refunded: result.refunded,
+    orderCancelled: order.status === 'cancelled'
+  });
 
   if (requestKey) requestKeyCache.set(requestKey, result);
   return result;
@@ -2369,6 +2410,9 @@ function splitOrderFunds(order: Order, refundAmount: number, actor: string, reas
   assertOrderOpen(order);
   const result = financeLedger.resolveEscrowSplit({ orderId: order.id, refundAmount, reason, actor });
   order.status = 'completed';
+  if (!order.completedAt) {
+    order.completedAt = new Date().toISOString();
+  }
   const seller = users.find(u => u.id === order.sellerId);
   if (seller && !releaseCompletedOrders.has(order.id)) {
     releaseCompletedOrders.add(order.id);
@@ -2393,6 +2437,10 @@ function splitOrderFunds(order: Order, refundAmount: number, actor: string, reas
   syncUserBalances();
   saveOrdersToDisk();
   saveRefundsToDisk();
+
+  emitSystemEvent(order.id, 'escrow_refunded', `💸 Partial escrow refund ($${refundAmount.toLocaleString()}) credited to buyer wallet.`, { refunded: refundAmount, isSplit: true });
+  emitSystemEvent(order.id, 'escrow_released', `🎉 Remaining escrow released to seller ($${result.release.freelancerNet.toLocaleString()} net).`, { freelancerNet: result.release.freelancerNet, isSplit: true });
+
   if (requestKey) requestKeyCache.set(requestKey, result);
   return result;
 }
@@ -2563,9 +2611,14 @@ app.patch('/api/orders/:id/extend-time', requireAdmin, (req, res) => {
     senderId: 'system',
     senderName: 'System / Admin Notice',
     text: `⏱️ Deadline extended from ${oldDate} to ${order.dueDate}. ${reason ? 'Reason: ' + reason : 'Admin approved time extension.'}`,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    type: 'system',
+    metadata: { action: 'order_deadline_extended', oldDate, newDueDate: order.dueDate, reason }
   };
   recordMessage(sysMsg);
+  saveMessagesToDisk();
+  saveOrdersToDisk();
+  broadcastMessage(sysMsg, order.id);
 
   registerAuditLog({
     id: 'log_' + Date.now(),
@@ -2669,12 +2722,20 @@ app.post('/api/orders/:id/deliverable', requireAuth, (req, res) => {
       deliveredAt: new Date().toISOString()
     });
 
+    let resolvedRevisionCount = 0;
     if (order.revisions && order.revisions.length > 0) {
       for (const rev of order.revisions) {
         if (rev.status === 'requested') {
           rev.status = 'resolved';
+          resolvedRevisionCount++;
         }
       }
+    }
+
+    if (resolvedRevisionCount > 0) {
+      emitSystemEvent(order.id, 'revision_resolved', `📝 Revision resolved via Delivery #v${version}.`, {
+        deliveryVersion: version
+      });
     }
 
     const summaryParts: string[] = [];
@@ -2682,16 +2743,64 @@ app.post('/api/orders/:id/deliverable', requireAuth, (req, res) => {
     if (storedReference) summaryParts.push(`Reference: ${storedReference}`);
     const fileSummary = summaryParts.length > 0 ? summaryParts.join(' | ') : 'written completion update';
     
-    if (!isDraft) {
-      emitSystemEvent(order.id, 'deliverable_submitted', 'Final invoice submitted.', {
+    emitSystemEvent(
+      order.id,
+      'deliverable_submitted',
+      isDraft
+        ? `📦 Draft Delivery #v${version} submitted (${fileSummary}).`
+        : `📦 Delivery / Final Invoice #v${version} submitted (${fileSummary}).`,
+      {
         version,
+        isDraft,
         notes: sanitizedNotes,
-        reference: storedReference || undefined
-      });
+        reference: storedReference || undefined,
+        files: uploadedFiles
+      }
+    );
+
+    // When raised from the UI Invoice modal (createInvoiceOffer: true), also create or update the interactive INV-xxxx card
+    let createdInvoiceOffer: any = undefined;
+    if (!isDraft && req.body.createInvoiceOffer && orderHasEscrow(order.id)) {
+      const activeEsc = getActiveEscrowRemaining(order);
+      const requestedAmt = Math.round(Number(req.body.invoiceAmount || activeEsc || order.amount || 0) * 100) / 100;
+      const invAmt = requestedAmt >= activeEsc && requestedAmt > 0 ? requestedAmt : (activeEsc || Number(order.amount || 0));
+      const invTitle = (typeof req.body.invoiceTitle === 'string' && req.body.invoiceTitle.trim().length >= 3)
+        ? req.body.invoiceTitle.trim().slice(0, 120)
+        : `Final Invoice: ${order.title}`.slice(0, 120);
+      const existingPendingInv = workstreamOffers.find(o => o.orderId === order.id && o.kind === 'invoice' && o.status === 'pending');
+      if (existingPendingInv) {
+        existingPendingInv.title = invTitle;
+        existingPendingInv.amount = invAmt;
+        existingPendingInv.note = trimmedNotes || existingPendingInv.note;
+        existingPendingInv.files = uploadedFiles.length > 0 ? uploadedFiles : existingPendingInv.files;
+        existingPendingInv.reference = storedReference || existingPendingInv.reference;
+        saveOffersToDisk();
+        createdInvoiceOffer = viewOffer(existingPendingInv);
+      } else if (invAmt > 0) {
+        const newInv: WorkstreamOffer = {
+          id: 'off_' + randomUUID().slice(0, 12),
+          number: `INV-${String(workstreamOffers.filter(o => o.kind === 'invoice').length + 1001)}`,
+          orderId: order.id,
+          kind: 'invoice',
+          title: invTitle,
+          amount: invAmt,
+          note: trimmedNotes || undefined,
+          files: uploadedFiles.length > 0 ? uploadedFiles : undefined,
+          reference: storedReference || undefined,
+          status: 'pending',
+          createdBy: caller?.id || order.sellerId,
+          createdAt: new Date().toISOString()
+        };
+        workstreamOffers.push(newInv);
+        saveOffersToDisk();
+        postOfferMessage(order, newInv, { id: caller?.id || order.sellerId, name: caller?.name || 'Seller' }, `New invoice ${newInv.number}: ${invTitle}`, 'offer_created');
+        createdInvoiceOffer = viewOffer(newInv);
+      }
     }
+
     saveOrdersToDisk();
 
-    res.json({ success: true, files: uploadedFiles, file: uploadedFiles[0], order: enrichOrderWithServiceInfo(order) });
+    res.json({ success: true, files: uploadedFiles, file: uploadedFiles[0], offer: createdInvoiceOffer, order: enrichOrderWithServiceInfo(order) });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   } finally {
@@ -2840,9 +2949,13 @@ app.patch('/api/orders/:id/mute', requireRole(['admin', 'super_admin', 'support'
     text: order.isMuted 
       ? `🔒 Chat paused by Administrator during case review. Neither party may send messages.`
       : `🔓 Chat unlocked by Administrator. Standard messaging resumed.`,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    type: 'system',
+    metadata: { action: order.isMuted ? 'chat_muted' : 'chat_unmuted' }
   };
   recordMessage(sysMsg);
+  saveMessagesToDisk();
+  broadcastMessage(sysMsg, order.id);
 
   res.json({ success: true, isMuted: order.isMuted });
 });
@@ -2862,9 +2975,13 @@ app.patch('/api/orders/:id/pause-timer', requireRole(['admin', 'super_admin', 's
     text: order.isTimerPaused 
       ? `⏸️ Delivery countdown paused by Administrator pending dispute/clarification.`
       : `▶️ Delivery countdown resumed by Administrator. Normal timer active.`,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    type: 'system',
+    metadata: { action: order.isTimerPaused ? 'timer_paused' : 'timer_resumed' }
   };
   recordMessage(sysMsg);
+  saveMessagesToDisk();
+  broadcastMessage(sysMsg, order.id);
 
   registerAuditLog({
     id: 'log_' + Date.now(),
@@ -2926,7 +3043,6 @@ app.post('/api/orders/:id/force-complete', requireAdmin, (req, res) => {
     const reason = String(req.body.reason || 'Admin administrative force-release in seller favor.');
     const result = releaseOrderFunds(order, adminActor(req), reason, req.body.requestKey);
     closeActiveDispute(order.id, 'resolved_release', reason);
-    pushSystemMessage(order.id, `✅ Order Approved & Completed by Administration! Escrow funds released to freelancer wallet. Net Payout: $${result.freelancerNet}.`, 'order_completed');
     res.json({ success: true, order: enrichOrderWithServiceInfo(order), result });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
@@ -2961,7 +3077,6 @@ app.post('/api/orders/:id/force-cancel', requireAdmin, (req, res) => {
       result = refundOrderFunds(order, undefined, adminActor(req), reason, req.body.requestKey);
       refundAmount = result.refunded;
       closeActiveDispute(order.id, 'resolved_refund', reason);
-      pushSystemMessage(order.id, `🚨 Order Cancelled & Refunded by Administration. $${refundAmount} credited back to buyer wallet balance. Reason: ${reason}`, 'order_cancelled');
     }
     res.json({ success: true, order: enrichOrderWithServiceInfo(order), result });
   } catch (err: any) {
@@ -3118,19 +3233,27 @@ app.get('/api/payments/user/:userId', requireAuth, (req, res) => {
     const walletData = financeLedger.getWalletById(userId);
     const availableBalance = walletData?.wallet.availableBalance ?? (u?.walletBalance ?? 0);
     
-    const buyerEscrowOrders = orders.filter(o => o.buyerId === userId && ['funded_in_escrow', 'in_progress'].includes(o.status));
-    const buyerEscrowAmount = buyerEscrowOrders.reduce((sum, o) => sum + (o.amount || 0), 0);
+    const activeEscrowStatuses = ['funded_in_escrow', 'in_progress', 'delivered', 'revision', 'disputed', 'draft_review', 'work_in_progress'];
+    const buyerEscrowOrders = orders.filter(o => o.buyerId === userId && activeEscrowStatuses.includes(o.status));
+    const buyerEscrowAmount = buyerEscrowOrders.reduce((sum, o) => {
+      const esc = financeLedger.getEscrow(o.id);
+      return sum + (esc && esc.status === 'held' ? esc.remaining : (o.amount || 0));
+    }, 0);
 
-    const freelancerEscrowOrders = orders.filter(o => o.sellerId === userId && ['funded_in_escrow', 'in_progress', 'delivered'].includes(o.status));
-    const freelancerEscrowAmount = freelancerEscrowOrders.reduce((sum, o) => sum + (o.amount || 0), 0);
+    const freelancerEscrowOrders = orders.filter(o => o.sellerId === userId && activeEscrowStatuses.includes(o.status));
+    const freelancerEscrowAmount = freelancerEscrowOrders.reduce((sum, o) => {
+      const esc = financeLedger.getEscrow(o.id);
+      return sum + (esc && esc.status === 'held' ? esc.remaining : (o.amount || 0));
+    }, 0);
 
-    const userPaidOrders = orders.filter(o => o.buyerId === userId && ['funded_in_escrow', 'in_progress', 'delivered', 'completed'].includes(o.status));
+    const currentYearMonth = new Date().toISOString().slice(0, 7);
+    const userPaidOrders = orders.filter(o => o.buyerId === userId && ['funded_in_escrow', 'in_progress', 'delivered', 'revision', 'disputed', 'completed'].includes(o.status));
     const paidToDate = userPaidOrders.reduce((sum, o) => sum + (o.amount || 0), 0);
-    const paidThisMonth = userPaidOrders.filter(o => (o.createdAt || '').startsWith('2026-10')).reduce((sum, o) => sum + (o.amount || 0), 0);
+    const paidThisMonth = userPaidOrders.filter(o => (o.createdAt || '').startsWith(currentYearMonth)).reduce((sum, o) => sum + (o.amount || 0), 0);
 
     const userEarnedOrders = orders.filter(o => o.sellerId === userId && o.status === 'completed');
     const earnedToDate = u?.earned ?? userEarnedOrders.reduce((sum, o) => sum + financeLedger.quoteOrder(o.amount).freelancerNet, 0);
-    const earnedThisMonth = userEarnedOrders.filter(o => (o.createdAt || '').startsWith('2026-10')).reduce((sum, o) => sum + financeLedger.quoteOrder(o.amount).freelancerNet, 0);
+    const earnedThisMonth = userEarnedOrders.filter(o => (o.createdAt || '').startsWith(currentYearMonth)).reduce((sum, o) => sum + financeLedger.quoteOrder(o.amount).freelancerNet, 0);
 
     const userMethods = savedPaymentMethods.filter(m => m.userId === userId);
 
@@ -3224,6 +3347,7 @@ function handlePayoutRequest(req: Request, res: Response) {
       accountDetails: payout.accountDetails
     };
     payouts.unshift(record);
+    savePayoutsToDisk();
     syncUserBalances();
 
     registerAuditLog({
@@ -3504,24 +3628,6 @@ app.post('/api/payments/escrow/release', requireAuth, (req, res) => {
       details: `Escrow release authorized of $${order.amount}. $${result.freelancerNet} credited to ${seller?.name || 'freelancer'}, $${result.platformFee} platform fee.`,
       timestamp: new Date().toLocaleString()
     });
-
-    const releaseMsg: Message = {
-      id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-      orderId: order.id,
-      senderId: 'system',
-      senderName: 'WorkSphere Escrow Vault',
-      text: `🎉 Escrow funds ($${order.amount.toLocaleString()}) released to seller! Workstream marked as completed.`,
-      timestamp: new Date().toISOString(),
-      type: 'system',
-      metadata: {
-        action: 'escrow_released',
-        amount: order.amount
-      }
-    };
-    recordMessage(releaseMsg);
-    saveMessagesToDisk();
-    saveOrdersToDisk();
-    broadcastMessage(releaseMsg, order.id);
 
     res.json({ success: true, order: enrichOrderWithServiceInfo(order), freelancerNet: result.freelancerNet, platformFee: result.platformFee });
   } catch (err: any) {
@@ -4155,6 +4261,7 @@ const approvePayout = (req: Request, res: Response) => {
     if (!p) return res.status(404).json({ error: 'Payout not found' });
     if (p.status !== 'pending') return res.status(400).json({ error: `Cannot approve payout in status "${p.status}"` });
     p.status = 'approved';
+    savePayoutsToDisk();
     payoutAudit(req, 'PAYOUT_APPROVED', p, `Approved payout of $${p.amount} via ${p.method} for freelancer ${p.freelancerId}`);
     res.json(p);
   } catch (err: any) { res.status(400).json({ error: err.message }); }
@@ -4171,6 +4278,7 @@ const processPayout = (req: Request, res: Response) => {
     }
     const { journal } = financeLedger.settlePayout({ payoutId: p.id, actor: adminActor(req), providerReference: req.body?.providerReference });
     p.status = 'processed';
+    savePayoutsToDisk();
     payoutAudit(req, 'PAYOUT_PROCESSED', p, `Processed payout of $${p.amount} via ${p.method}`);
     syncUserBalances();
     res.json({ success: true, payout: p, journal, ...p });
@@ -4184,6 +4292,7 @@ const rejectPayout = (req: Request, res: Response) => {
     if (p.status !== 'pending' && p.status !== 'approved') return res.status(400).json({ error: `Cannot reject payout in status "${p.status}"` });
     financeLedger.cancelPayout({ payoutId: p.id, reason: String(req.body?.reason || 'Administrative rejection'), actor: adminActor(req) });
     p.status = 'cancelled';
+    savePayoutsToDisk();
     payoutAudit(req, 'PAYOUT_REJECTED', p, `Rejected payout of $${p.amount}; funds returned to wallet`);
     syncUserBalances();
     res.json({ success: true, payout: p, ...p });
@@ -4197,6 +4306,7 @@ const failPayout = (req: Request, res: Response) => {
     if (p.status !== 'pending' && p.status !== 'approved') return res.status(400).json({ error: `Cannot fail payout in status "${p.status}"` });
     financeLedger.failPayout({ payoutId: p.id, reason: String(req.body?.reason || 'Gateway reported a transfer failure'), actor: adminActor(req) });
     p.status = 'failed';
+    savePayoutsToDisk();
     payoutAudit(req, 'PAYOUT_FAILED', p, `Payout of $${p.amount} failed; funds returned to wallet`);
     syncUserBalances();
     res.json(p);
@@ -4210,6 +4320,7 @@ const retryPayout = (req: Request, res: Response) => {
     if (p.status !== 'failed') return res.status(400).json({ error: 'Only failed payouts can be retried.' });
     financeLedger.retryPayout({ payoutId: p.id, actor: adminActor(req) });
     p.status = 'pending';
+    savePayoutsToDisk();
     payoutAudit(req, 'PAYOUT_RETRIED', p, `Re-queued failed payout of $${p.amount}`);
     syncUserBalances();
     res.json(p);
@@ -4667,14 +4778,17 @@ app.post('/api/reviews', requireAuth, (req, res) => {
   }
   const resolvedTargetUserId = expectedTargetUserId;
 
-  // Completed and Cancelled order eligibility
+  // Completed, Cancelled, or Paid-Invoice Workstream eligibility
   const allowedReviewStatuses = ['completed', 'cancelled'];
-  if (!allowedReviewStatuses.includes(order.status)) {
+  if (!allowedReviewStatuses.includes(order.status) && !hasPaidInvoiceOrReleasedEscrow(order)) {
     return res.status(409).json({ error: `Reviews can only be submitted for completed or cancelled Workstreams (current status: ${order.status}).` });
   }
 
+  const isBuyerReviewer = caller.id === order.buyerId;
   // Check if review already exists for this order & reviewer -> Block duplicate submission (409)
-  const existingReview = reviews.find(r => r.orderId === order.id && r.reviewerId === caller.id) || (order.review && order.review.reviewerId === caller.id ? order.review : null);
+  const existingReview = reviews.find(r => r.orderId === order.id && r.reviewerId === caller.id) ||
+    (isBuyerReviewer && order.review && order.review.reviewerId === caller.id ? order.review : null) ||
+    (!isBuyerReviewer && (order as any).sellerReview && (order as any).sellerReview.reviewerId === caller.id ? (order as any).sellerReview : null);
   if (existingReview) {
     return res.status(409).json({ error: 'A review has already been submitted for this order. Use PUT /api/reviews/:id to edit your review.' });
   }
@@ -4698,7 +4812,11 @@ app.post('/api/reviews', requireAuth, (req, res) => {
   reviews.unshift(newReview);
   saveReviewsToDisk();
 
-  order.review = newReview;
+  if (isBuyerReviewer) {
+    order.review = newReview;
+  } else {
+    (order as any).sellerReview = newReview;
+  }
   saveOrdersToDisk();
 
   // Dynamically update target user's rating and reviewsCount using public reviews
@@ -5458,6 +5576,40 @@ app.post('/api/projects', requireAuth, (req, res) => {
   res.json(newProj);
 });
 
+app.patch('/api/projects/:id/status', requireAuth, (req, res) => {
+  const authUserId = (req as any).authenticatedUserId;
+  const caller = (req as any).authenticatedUser || users.find(u => u.id === authUserId);
+  if (!caller || caller.status !== 'active') return res.status(403).json({ error: 'Account is not active' });
+
+  const p = projects.find(proj => proj.id === req.params.id);
+  if (!p) return res.status(404).json({ error: 'Project not found' });
+
+  if (p.buyerId !== caller.id && !isStaffUser(caller)) {
+    return res.status(403).json({ error: 'Forbidden: Only the project owner can update this project status.' });
+  }
+
+  const requestedStatus = typeof req.body?.status === 'string' ? req.body.status.trim().toLowerCase() : 'completed';
+  const allowedStatuses: Project['status'][] = ['open', 'published', 'in_progress', 'completed', 'unpublished'];
+  if (!allowedStatuses.includes(requestedStatus as Project['status'])) {
+    return res.status(400).json({ error: 'Invalid project status.' });
+  }
+
+  const oldStatus = p.status;
+  p.status = requestedStatus as Project['status'];
+
+  registerAuditLog({
+    id: 'log_' + Date.now(),
+    actor: caller.name,
+    role: caller.role || 'user',
+    action: `PROJECT_STATUS_${p.status.toUpperCase()}`,
+    target: `Project "${p.title}"`,
+    details: `Buyer changed project status from "${oldStatus}" to "${p.status}" (${p.status === 'completed' ? 'Closed bidding & hidden from public listing' : 'Updated listing status'})`,
+    timestamp: new Date().toLocaleString()
+  });
+
+  res.json(p);
+});
+
 // Admin Projects Management Endpoints
 app.get('/api/admin/projects', requireAdmin, (req, res) => {
   res.json(projects);
@@ -5827,6 +5979,9 @@ app.post('/api/proposals', requireAuth, (req, res) => {
 
   const proj = projects.find(p => p.id === req.body.projectId);
   if (!proj) return res.status(404).json({ error: 'Project not found.' });
+  if (!['open', 'published', 'in_progress'].includes(proj.status)) {
+    return res.status(400).json({ error: 'This project is completed and closed to new proposals.' });
+  }
   if (proj.buyerId === caller.id) {
     return res.status(400).json({ error: 'You cannot submit a proposal to your own project.' });
   }
@@ -5921,22 +6076,23 @@ app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
     const enriched = enrichOrderWithServiceInfo(newOrd);
     recordOrder(enriched);
     saveOrdersToDisk();
-    emitSystemEvent(newOrd.id, 'order_created', `Order #${newOrd.id} created.`);
-    if (!isInquiry) {
-      // Open the workstream with a record of the purchase (and the brief, if one was given) so it is never an empty thread.
-      const opening: Array<{ senderId: string; senderName: string; text: string; type: 'system' | 'message' }> = [{
-        senderId: 'system', senderName: 'Workstream', type: 'system',
-        text: `Order placed: ${title}. Payment is held in escrow until the work is approved.`
-      }];
-      if (requirements) opening.push({ senderId: buyer.id, senderName: buyer.name, type: 'message', text: `Project requirements: ${requirements}` });
-      opening.forEach((m, i) => {
+    if (isInquiry) {
+      emitSystemEvent(newOrd.id, 'order_created', `Inquiry thread opened: ${title}.`);
+    } else {
+      emitSystemEvent(newOrd.id, 'order_created', `Order placed: ${title}. Payment is held in escrow until the work is approved.`);
+      if (requirements) {
         recordMessage({
-          id: 'msg_' + Date.now() + '_' + i + Math.random().toString(36).slice(2, 6),
-          orderId: id, ...m, timestamp: new Date(Date.now() + i).toISOString(),
-          metadata: { action: i === 0 ? 'order_created' : 'requirements_logged' }
+          id: 'msg_' + Date.now() + '_req_' + Math.random().toString(36).slice(2, 6),
+          orderId: id,
+          senderId: buyer.id,
+          senderName: buyer.name,
+          type: 'message',
+          text: `Project requirements: ${requirements}`,
+          timestamp: new Date(Date.now() + 1).toISOString(),
+          metadata: { action: 'requirements_logged' }
         } as Message);
-      });
-      saveMessagesToDisk();
+        saveMessagesToDisk();
+      }
     }
     res.status(201).json(enriched);
   } catch (err: any) {
@@ -5960,12 +6116,13 @@ interface WorkstreamOffer {
   amount: number;
   deliveryDays?: number;
   note?: string;
+  files?: Array<{ id?: string; name: string; size: string; url: string; uploadedAt?: string }>;
+  reference?: string;
   status: WorkstreamOfferStatus;
   createdBy: string;
   createdAt: string;
   resolvedAt?: string;
   resolvedBy?: string;
-
 }
 
 const OFFERS_FILE = path.join(DATA_DIR, 'workstream_offers.json');
@@ -5988,6 +6145,22 @@ function orderHasEscrow(orderId: string): boolean {
   return !!financeLedger.getEscrow(orderId);
 }
 
+function getActiveEscrowRemaining(order: Order): number {
+  const esc = financeLedger.getEscrow(order.id);
+  if (esc) return esc.remaining;
+  return (order.status === 'completed' || order.status === 'cancelled') ? 0 : Number(order.amount || 0);
+}
+
+function hasPaidInvoiceOrReleasedEscrow(order: Order): boolean {
+  const esc = financeLedger.getEscrow(order.id);
+  return Boolean(
+    order.status === 'completed' ||
+    releaseCompletedOrders.has(order.id) ||
+    (esc && esc.releasedGross > 0) ||
+    workstreamOffers.some(o => o.orderId === order.id && o.kind === 'invoice' && o.status === 'paid')
+  );
+}
+
 function findLinkedProposalForOffer(offer: WorkstreamOffer, order: Order): Proposal | undefined {
   return proposals.find(p =>
     (offer.proposalId && p.id === offer.proposalId) ||
@@ -6005,7 +6178,7 @@ function viewOffer(o: WorkstreamOffer) {
     clientTotal = financeLedger.quoteOrder(o.amount)?.clientTotal;
     if (o.kind === 'invoice') {
       const ord = orders.find(ord => ord.id === o.orderId);
-      const curr = Number(ord?.amount || 0);
+      const curr = ord ? (o.status === 'pending' ? getActiveEscrowRemaining(ord) : Number(ord.amount || 0)) : 0;
       additionalAmount = Math.max(0, FinanceLedgerEngine.round(o.amount - curr));
       if (additionalAmount > 0) {
         clientAdditionalTotal = financeLedger.quoteOrder(additionalAmount)?.clientTotal;
@@ -6056,10 +6229,14 @@ app.get('/api/orders/:id/offers', requireAuth, (req, res) => {
     .filter(o => o.orderId === order.id)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .map(viewOffer);
+  const esc = financeLedger.getEscrow(order.id);
   res.json({
     offers,
     currencySymbol: siteSettings.getFlattenedSettings().currencySymbol || '$',
-    escrowFunded: orderHasEscrow(order.id)
+    escrowFunded: orderHasEscrow(order.id),
+    escrowRemaining: getActiveEscrowRemaining(order),
+    totalReleased: esc ? esc.releasedGross : (order.status === 'completed' ? Number(order.amount || 0) : 0),
+    hasPaidInvoice: hasPaidInvoiceOrReleasedEscrow(order)
   });
 });
 
@@ -6071,6 +6248,7 @@ app.post('/api/orders/:id/offers', requireAuth, rateLimit(20, 60_000), (req, res
     if (!order) return res.status(404).json({ error: 'Order not found' });
     // Only the order's seller may raise proposals, invoices or deposit requests. Staff cannot raise them on a seller's behalf.
     if (caller.id !== order.sellerId) return res.status(403).json({ error: 'Only the seller of this workstream can send this.' });
+    if (order.status === 'cancelled') return res.status(409).json({ error: 'Cannot send offers on a cancelled order.' });
 
     const kind = req.body?.kind as WorkstreamOfferKind;
     if (!['proposal', 'invoice', 'deposit'].includes(kind)) return res.status(400).json({ error: 'Invalid type.' });
@@ -6085,6 +6263,7 @@ app.post('/api/orders/:id/offers', requireAuth, rateLimit(20, 60_000), (req, res
     const title = kind === 'deposit' ? (rawTitle || 'Escrow deposit') : rawTitle;
     if (title.length < 3 || title.length > 120) return res.status(400).json({ error: 'Title must be 3-120 characters.' });
     const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 1000) : '';
+    const rawRef = typeof req.body?.reference === 'string' ? req.body.reference.trim().slice(0, 2000) : '';
     let deliveryDays: number | undefined;
     if (kind === 'proposal') {
       deliveryDays = Math.round(Number(req.body?.deliveryDays));
@@ -6092,30 +6271,89 @@ app.post('/api/orders/:id/offers', requireAuth, rateLimit(20, 60_000), (req, res
     }
 
     const funded = orderHasEscrow(order.id);
+    const activeEscrow = getActiveEscrowRemaining(order);
+    const hasPaidFirstInvoice = hasPaidInvoiceOrReleasedEscrow(order);
+
     if (kind === 'invoice') {
-      if (!funded) return res.status(400).json({ error: 'Final invoices are for completed work on a funded workstream.' });
-      if (order.amount && amount < order.amount) {
-        return res.status(400).json({ error: `Final invoice amount cannot be less than the gig price ($${order.amount}).` });
+      if (!funded || activeEscrow <= 0) return res.status(400).json({ error: 'Final invoices are for completed work on a funded workstream.' });
+      if (activeEscrow > 0 && amount < activeEscrow) {
+        return res.status(400).json({ error: `Final invoice amount cannot be less than the funded escrow price ($${activeEscrow}).` });
       }
       if (workstreamOffers.filter(o => o.orderId === order.id && o.kind === 'invoice' && o.status === 'pending').length >= 1) {
         return res.status(409).json({ error: 'A final invoice is already pending for this workstream.' });
       }
-    } else if (kind === 'proposal') {
+    } else if (kind === 'proposal' || kind === 'deposit') {
       if (workstreamOffers.some(o => o.orderId === order.id && o.kind === 'invoice' && o.status === 'pending')) {
         return res.status(409).json({ error: 'A seller must not raise a new proposal when a previous proposal/order has a pending invoice.' });
       }
+      // PeoplePerHour Gig Rule: When a buyer orders a Gig, it is already funded in escrow.
+      // The seller cannot send a new proposal until the first invoice has been paid.
+      if (order.gigId && activeEscrow > 0 && !hasPaidFirstInvoice) {
+        return res.status(409).json({ error: 'This Gig is already funded in escrow. Please raise and get your first invoice paid before sending a follow-on proposal.' });
+      }
+    }
+
+    let uploadedFiles: Array<{ id: string; name: string; size: string; url: string; uploadedAt: string; type: string }> = [];
+    if (kind === 'invoice' && Array.isArray(req.body?.files) && req.body.files.length > 0) {
+      const validation = validateStoredWorkstreamFiles(req.body.files, caller);
+      if (!validation.ok) {
+        return res.status(400).json({ error: (validation as any).error });
+      }
+      uploadedFiles = validation.files.map((f: any, idx: number) => ({
+        id: 'deliv_' + Date.now() + '_' + idx,
+        name: f.name,
+        size: f.size,
+        url: f.url,
+        uploadedAt: new Date().toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }),
+        type: 'deliverable'
+      }));
     }
 
     const offer: WorkstreamOffer = {
       id: 'off_' + randomUUID().slice(0, 12),
       number: `${OFFER_PREFIX[kind]}-${String(workstreamOffers.filter(o => o.kind === kind).length + 1001)}`,
-      orderId: order.id, kind, title, amount, deliveryDays, note: note || undefined,
-      status: 'pending', createdBy: caller.id, createdAt: new Date().toISOString()
+      orderId: order.id,
+      kind,
+      title,
+      amount,
+      deliveryDays,
+      note: note || undefined,
+      files: uploadedFiles.length > 0 ? uploadedFiles : undefined,
+      reference: rawRef || undefined,
+      status: 'pending',
+      createdBy: caller.id,
+      createdAt: new Date().toISOString()
     };
     workstreamOffers.push(offer);
     saveOffersToDisk();
+
+    // When a seller raises an invoice with deliverables/notes/deliverWork from the WorkStream UI, record the delivery and mark as delivered
+    if (kind === 'invoice' && (req.body?.deliverWork || note || uploadedFiles.length > 0 || rawRef)) {
+      if (!order.deliverableFiles) order.deliverableFiles = [];
+      if (!order.deliveryHistory) order.deliveryHistory = [];
+      if (uploadedFiles.length > 0) order.deliverableFiles.push(...uploadedFiles);
+      const version = order.deliveryHistory.length + 1;
+      const sanitizedNotes = note ? escapeHtml(note) : escapeHtml(title);
+      order.deliveryNotes = sanitizedNotes;
+      if (rawRef) order.deliveryReference = rawRef;
+      order.deliveryHistory.push({
+        version,
+        notes: sanitizedNotes,
+        reference: rawRef || undefined,
+        files: uploadedFiles,
+        deliveredAt: new Date().toISOString()
+      });
+      order.status = 'delivered';
+      if (Array.isArray(order.revisions)) {
+        for (const rev of order.revisions) {
+          if (rev.status === 'requested') rev.status = 'resolved';
+        }
+      }
+      saveOrdersToDisk();
+    }
+
     postOfferMessage(order, offer, { id: caller.id, name: caller.name }, `New ${OFFER_LABEL[kind]} ${offer.number}: ${title}`, 'offer_created');
-    res.status(201).json({ offer: viewOffer(offer) });
+    res.status(201).json({ offer: viewOffer(offer), order: enrichOrderWithServiceInfo(order) });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
@@ -6161,8 +6399,11 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
     // Accepting / declining belongs to the buyer only (not staff, not the seller).
     if (caller.id !== order.buyerId) return res.status(403).json({ error: 'Only the buyer can respond to this.' });
 
-    if (order.status === 'completed' || order.status === 'cancelled') {
-      return res.status(400).json({ error: `Cannot accept offers on a ${order.status} order (escrow has already been released or refunded).` });
+    if (order.status === 'cancelled') {
+      return res.status(400).json({ error: 'Cannot accept offers on a cancelled order (escrow has already been refunded).' });
+    }
+    if (order.status === 'completed' && offer.kind === 'invoice') {
+      return res.status(400).json({ error: 'Cannot accept an invoice on a completed order (escrow has already been released).' });
     }
 
     if (action === 'decline') {
@@ -6173,10 +6414,16 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
           linkedProp.status = 'rejected';
           saveProposalsToDisk();
         }
+      } else if (offer.kind === 'invoice' && (order.status === 'delivered' || order.status === 'draft_review')) {
+        const otherPendingInvoice = workstreamOffers.some(o => o.orderId === order.id && o.id !== offer.id && o.kind === 'invoice' && o.status === 'pending');
+        if (!otherPendingInvoice && orderHasEscrow(order.id)) {
+          order.status = 'revision';
+          saveOrdersToDisk();
+        }
       }
       saveOffersToDisk();
       postOfferMessage(order, offer, null, `${offer.number} was declined by the buyer.`, 'offer_declined');
-      return res.json({ offer: viewOffer(offer) });
+      return res.json({ offer: viewOffer(offer), order: enrichOrderWithServiceInfo(order) });
     }
 
     // ----- accept: real money movement through the ledger -----
@@ -6184,6 +6431,7 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
     const today = now.split('T')[0];
     const protectionEnd = new Date(Date.now() + siteSettings.getSettings().commission.escrowProtectionDays * 86400000).toISOString().split('T')[0];
     const isInitialFunding = !orderHasEscrow(order.id);
+    const isFollowOnAfterCompletion = orderHasEscrow(order.id) && (order.status === 'completed' || getActiveEscrowRemaining(order) === 0);
 
     if (offer.kind === 'invoice') {
       const validationError = validateOrderReleasePreconditions(order, false, true);
@@ -6202,7 +6450,7 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
 
       // If invoice amount is higher than existing escrow, charge the additional amount to the buyer into escrow
       if (additionalAmount > 0) {
-        financeLedger.topUpEscrow({
+        topUpOrderEscrowWithEvent({
           orderId: order.id,
           orderTitle: `Invoice Top-up: ${offer.title}`,
           amount: additionalAmount,
@@ -6215,12 +6463,17 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
       }
 
       // Resolve any outstanding revision requests upon accepting the new Invoice
+      let invoiceRevisionsResolved = false;
       if (Array.isArray(order.revisions)) {
         for (const rev of order.revisions) {
           if (rev.status === 'requested') {
             rev.status = 'resolved';
+            invoiceRevisionsResolved = true;
           }
         }
+      }
+      if (invoiceRevisionsResolved) {
+        emitSystemEvent(order.id, 'revision_resolved', `📝 Revision resolved via accepted invoice ${offer.number}.`);
       }
 
       // Perform the required financial release successfully first
@@ -6236,8 +6489,8 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
       saveOrdersToDisk();
       saveMessagesToDisk();
       const completionNote = additionalAmount > 0
-        ? `${offer.number} ($${invoiceAmount.toLocaleString()}) was paid (+$${additionalAmount.toLocaleString()} funded from wallet) and full escrow ($${order.amount.toLocaleString()}) was released to the seller. Order completed!`
-        : `${offer.number} was accepted and escrow funds ($${order.amount.toLocaleString()}) were released to the seller. Order completed!`;
+        ? `${offer.number} ($${invoiceAmount.toLocaleString()}) was paid (+$${additionalAmount.toLocaleString()} funded from wallet) and full escrow ($${invoiceAmount.toLocaleString()}) was released to the seller. Order completed!`
+        : `${offer.number} was accepted and escrow funds ($${invoiceAmount.toLocaleString()}) were released to the seller. Order completed!`;
       postOfferMessage(order, offer, null, completionNote, 'offer_paid');
       return res.json({ offer: viewOffer(offer), order: enrichOrderWithServiceInfo(order) });
 
@@ -6270,9 +6523,32 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
         }
       }
       postOfferMessage(order, offer, null, `${offer.number} was accepted and escrow was funded ($${offer.amount}).`, 'offer_accepted');
+    } else if (isFollowOnAfterCompletion) {
+      // PeoplePerHour Follow-On Proposal / Deposit accepted in the same WorkStream after previous invoice was paid
+      topUpOrderEscrowWithEvent({
+        orderId: order.id,
+        orderTitle: offer.title,
+        amount: offer.amount,
+        buyerId: order.buyerId,
+        sellerId: order.sellerId,
+        actor: `user:${order.buyerId}`
+      });
+      releaseCompletedOrders.delete(order.id);
+      order.amount = offer.amount;
+      order.status = 'funded_in_escrow';
+      order.completedAt = undefined;
+      order.escrowProtectionStartDate = today;
+      order.escrowProtectionEndDate = protectionEnd;
+      order.feeBreakdown = financeLedger.quoteOrder(offer.amount);
+      if (offer.kind === 'proposal' && offer.deliveryDays) {
+        order.dueDate = new Date(Date.now() + offer.deliveryDays * 86400000).toISOString().split('T')[0];
+      }
+      offer.orderId = order.id;
+      offer.status = 'accepted';
+      postOfferMessage(order, offer, null, `Follow-on ${OFFER_LABEL[offer.kind]} ${offer.number} ("${offer.title}") was accepted and $${offer.amount.toLocaleString()} was funded into escrow.`, 'offer_accepted');
     } else {
-      // Escrow is already funded: top up existing order's escrow directly under the primary orderId (no secondary order ID).
-      financeLedger.topUpEscrow({
+      // Escrow is already funded and held: top up existing order's escrow directly under the primary orderId (no secondary order ID).
+      topUpOrderEscrowWithEvent({
         orderId: order.id,
         orderTitle: offer.title,
         amount: offer.amount,
