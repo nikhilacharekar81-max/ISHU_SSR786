@@ -3333,21 +3333,35 @@ app.post('/api/payments/gateway/checkout', requireAuth, rateLimit(10, 60_000), (
   });
 });
 
-app.post('/api/payments/webhook', (req, res) => {
-  const secret = req.headers['x-webhook-secret'];
-  if (!process.env.WEBHOOK_SECRET || secret !== process.env.WEBHOOK_SECRET) {
-    return res.status(403).json({ error: 'Unauthorized' });
+// For webhook signature verification, we need the raw body. 
+// Using a separate route or parsing raw body for this specific path.
+app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+  const signature = req.headers['x-webhook-signature'] as string;
+  const secret = process.env.WEBHOOK_SECRET;
+  
+  if (!secret || !signature) {
+    return res.status(403).json({ error: 'Unauthorized: Missing signature' });
   }
 
-  const { event, userId, amount, reference } = req.body || {};
+  const hmac = crypto.createHmac('sha256', secret);
+  hmac.update(req.body);
+  const calculatedSignature = hmac.digest('hex');
+
+  if (calculatedSignature !== signature) {
+    return res.status(403).json({ error: 'Unauthorized: Invalid signature' });
+  }
+
+  const payload = JSON.parse(req.body.toString());
+  const { event, userId, amount, reference, transactionId } = payload || {};
+  
   if (event === 'payment.succeeded' && userId && amount) {
     ensureWallet(userId);
     try {
       financeLedger.creditDeposit({
         userId,
         amount: Number(amount),
-        reference: reference || 'WH-DEPOSIT',
-        idempotencyKey: `WH-${userId}-${reference || Date.now()}-${randomUUID().slice(0, 8)}`,
+        reference: reference || transactionId || 'WH-DEPOSIT',
+        idempotencyKey: `WH-${userId}-${transactionId || reference || Date.now()}`,
         actor: 'Gateway Webhook',
         source: 'webhook'
       });
