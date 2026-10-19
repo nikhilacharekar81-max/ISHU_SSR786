@@ -35,6 +35,7 @@ interface WorkstreamMessageInputProps {
   isGigOrder?: boolean;
   proposalHint?: string;
   invoiceHint?: string;
+  orderId?: string;
   currencySymbol?: string;
   disabled?: boolean;
   placeholder?: string;

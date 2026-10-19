@@ -35,6 +35,11 @@ export interface WorkstreamMessage {
     offerId?: string;
     offerKind?: string;
     clientMessageId?: string;
+    files?: any;
+    reference?: string;
+    reviewerRole?: string;
+    rating?: number;
+    comment?: string;
   };
   status?: 'sending' | 'sent' | 'failed';
 }

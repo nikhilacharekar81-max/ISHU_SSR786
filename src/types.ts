@@ -188,6 +188,7 @@ export interface Order {
   escrowRemaining?: number;
   totalReleased?: number;
   hasPaidInvoice?: boolean;
+  type?: 'gig' | 'project';
 }
 
 export interface UserAccount {
@@ -227,6 +228,8 @@ export interface UserAccount {
   password?: string;
   membershipTier?: string;
   buyerMembershipTier?: string;
+  kycStatus?: string;
+  ActiveRole?: string;
 }
 
 export type User = UserAccount;
@@ -363,6 +366,10 @@ export interface Message {
     reviewWindowDays?: number;
     offerId?: string;
     offerKind?: string;
+    oldDate?: string;
+    newDueDate?: string;
+    files?: any;
+    reviewerRole?: string;
   };
   status?: 'sending' | 'sent' | 'failed';
 }

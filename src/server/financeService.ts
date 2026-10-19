@@ -49,7 +49,7 @@ class FinanceService {
     return financeLedger.resolveEscrowSplit(params);
   }
 
-  public requestPayout(params: { freelancerId: string; amount: number; method: string; accountDetails: string; actor: string }) {
+  public requestPayout(params: { payoutId: string; freelancerId: string; amount: number; method: string; accountDetails: string; actor: string }) {
     return financeLedger.requestPayout(params);
   }
 

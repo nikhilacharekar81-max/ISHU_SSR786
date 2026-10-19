@@ -52,12 +52,13 @@ export const WorkstreamDeliverModal: React.FC<WorkstreamDeliverModalProps> = ({
     setUploading(true);
     setUploadError(null);
     for (const f of selected) {
-      const result = await uploadWorkstreamFile(order.id, f);
-      if (result.ok === false) {
-        setUploadError(result.error);
+      try {
+        const fileRes = await uploadWorkstreamFile(f);
+        setAttachedFiles(prev => [...prev, fileRes]);
+      } catch (err: any) {
+        setUploadError(err.message || 'File upload failed.');
         break;
       }
-      setAttachedFiles(prev => [...prev, result.file]);
     }
     setUploading(false);
   };

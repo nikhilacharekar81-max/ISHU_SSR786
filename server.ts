@@ -2615,7 +2615,7 @@ app.patch('/api/orders/:id/extend-time', requireAdmin, (req, res) => {
     text: `⏱️ Deadline extended from ${oldDate} to ${order.dueDate}. ${reason ? 'Reason: ' + reason : 'Admin approved time extension.'}`,
     timestamp: new Date().toISOString(),
     type: 'system',
-    metadata: { action: 'order_deadline_extended', oldDate, newDueDate: order.dueDate, reason }
+    metadata: { action: 'order_deadline_extended', oldDate, newDueDate: order.dueDate, reason } as any
   };
   recordMessage(sysMsg);
   saveMessagesToDisk();
