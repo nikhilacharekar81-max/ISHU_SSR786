@@ -714,5 +714,133 @@
     "originId": "gig_10",
     "createdAt": "2026-10-19",
     "status": "active"
+  },
+  {
+    "workspaceId": "ws_6007eb73-7b9",
+    "buyerId": "user_7",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_2",
+    "createdAt": "2026-10-19",
+    "status": "active",
+    "activeOrderId": "ord_b33f67d7-dee"
+  },
+  {
+    "workspaceId": "ws_d66ca63c-a08",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_2",
+    "createdAt": "2026-10-19",
+    "status": "active"
+  },
+  {
+    "workspaceId": "ws_708638d8-772",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_2",
+    "createdAt": "2026-10-19",
+    "status": "active"
+  },
+  {
+    "workspaceId": "ws_012e81d8-215",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_10",
+    "createdAt": "2026-10-19",
+    "status": "active"
+  },
+  {
+    "workspaceId": "ws_126e976e-7bd",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_2",
+    "createdAt": "2026-10-19",
+    "status": "active",
+    "activeOrderId": "ord_94ad79f8-8ba"
+  },
+  {
+    "workspaceId": "ws_a3e31ff1-ff0",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_2",
+    "createdAt": "2026-10-19",
+    "status": "active"
+  },
+  {
+    "workspaceId": "ws_0a82a80d-0c0",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_2",
+    "createdAt": "2026-10-19",
+    "status": "active"
+  },
+  {
+    "workspaceId": "ws_f66e7e41-029",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_10",
+    "createdAt": "2026-10-19",
+    "status": "active"
+  },
+  {
+    "workspaceId": "ws_65454219-6e6",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_2",
+    "createdAt": "2026-10-19",
+    "status": "active"
+  },
+  {
+    "workspaceId": "ws_647f1d18-558",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_2",
+    "createdAt": "2026-10-19",
+    "status": "active"
+  },
+  {
+    "workspaceId": "ws_e17f2afe-c7b",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_10",
+    "createdAt": "2026-10-19",
+    "status": "active"
+  },
+  {
+    "workspaceId": "ws_1d24430b-f10",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_2",
+    "createdAt": "2026-10-19",
+    "status": "active"
+  },
+  {
+    "workspaceId": "ws_12b5189c-bec",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_2",
+    "createdAt": "2026-10-19",
+    "status": "active"
+  },
+  {
+    "workspaceId": "ws_66b6ba23-11f",
+    "buyerId": "user_1",
+    "sellerId": "user_2",
+    "originType": "gig",
+    "originId": "gig_10",
+    "createdAt": "2026-10-19",
+    "status": "active"
   }
 ]

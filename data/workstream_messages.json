@@ -283,5 +283,87 @@
       "acceptedVersion": 1,
       "reviewWindowDays": 3
     }
+  },
+  {
+    "id": "msg_1792421195485_c051",
+    "orderId": "ord_b33f67d7-dee",
+    "senderId": "system",
+    "senderName": "WorkSphere System",
+    "text": "Inquiry thread opened: Inquiry: I will design a complete Figma UI/UX design system and brand kit.",
+    "timestamp": "2026-10-19T14:46:35.485Z",
+    "type": "system",
+    "metadata": {
+      "action": "order_created"
+    }
+  },
+  {
+    "id": "msg_1792421195666_02q0",
+    "orderId": "ord_b33f67d7-dee",
+    "senderId": "user_7",
+    "senderName": "Liam O'Connor",
+    "text": "Hi Elena Rostova, I am interested in your gig: \"I will design a complete Figma UI/UX design system and brand kit\". Let's discuss details!",
+    "timestamp": "2026-10-19T14:46:35.666Z",
+    "type": "message",
+    "metadata": {}
+  },
+  {
+    "id": "msg_1792421213755_jrnu",
+    "orderId": "ord_b33f67d7-dee",
+    "senderId": "user_7",
+    "senderName": "Liam O'Connor",
+    "text": "Hi, I am interested in your project",
+    "timestamp": "2026-10-19T14:46:53.755Z",
+    "type": "message",
+    "metadata": {
+      "clientMessageId": "msg_1792421213370_e2l5"
+    }
+  },
+  {
+    "id": "msg_1792422373879_a2nn",
+    "orderId": "ord_94ad79f8-8ba",
+    "senderId": "system",
+    "senderName": "WorkSphere System",
+    "text": "Inquiry thread opened: Inquiry: I will design a complete Figma UI/UX design system and brand kit.",
+    "timestamp": "2026-10-19T15:06:13.880Z",
+    "type": "system",
+    "metadata": {
+      "action": "order_created"
+    }
+  },
+  {
+    "id": "msg_1792422374078_xd83",
+    "orderId": "ord_94ad79f8-8ba",
+    "senderId": "user_1",
+    "senderName": "Alex Rivera",
+    "text": "Hi Elena Rostova, I am interested in your gig: \"I will design a complete Figma UI/UX design system and brand kit\". Let's discuss details!",
+    "timestamp": "2026-10-19T15:06:14.078Z",
+    "type": "message",
+    "metadata": {}
+  },
+  {
+    "id": "msg_1792422393110_e9vh",
+    "orderId": "ord_94ad79f8-8ba",
+    "senderId": "user_1",
+    "senderName": "Alex Rivera",
+    "text": "Hi i am interested in buying this",
+    "timestamp": "2026-10-19T15:06:33.110Z",
+    "type": "message",
+    "metadata": {
+      "clientMessageId": "msg_1792422392929_6kx8"
+    }
+  },
+  {
+    "id": "msg_1792422676009_7rjo",
+    "orderId": "ord_102",
+    "senderId": "user_2",
+    "senderName": "Elena Rostova",
+    "text": "New proposal PRP-1001: Hi new proposal",
+    "timestamp": "2026-10-19T15:11:16.009Z",
+    "type": "message",
+    "metadata": {
+      "action": "offer_created",
+      "offerId": "off_ecadd33e-1d3",
+      "offerKind": "proposal"
+    }
   }
 ]

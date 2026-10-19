@@ -130,7 +130,6 @@ export default function App({ initialPath, initialData }: { initialPath?: string
     }
   }, []);
 
-
   // Custom Data Hook
   const {
     users: usersList, setUsers: setUsersList,
@@ -153,6 +152,10 @@ export default function App({ initialPath, initialData }: { initialPath?: string
     escrowProtectionDays, setEscrowProtectionDays,
     refresh, userEmails, setUserEmails, fetchUserEmails
   } = useAppData(initialData);
+
+  useEffect(() => {
+    refresh();
+  }, [currentUser, refresh]);
 
 
   // Search & Filter
