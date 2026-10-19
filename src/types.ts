@@ -109,6 +109,8 @@ export interface Proposal {
   deliveryDays: number;
   createdAt: string;
   status: 'pending' | 'accepted' | 'rejected';
+  workstreamOrderId?: string;
+  offerId?: string;
 }
 
 export interface DeliveryRecord {
@@ -140,6 +142,7 @@ export interface Order {
   escrowProtectionEndDate?: string;
   gigId?: string;
   projectId?: string;
+  proposalId?: string;
   serviceUrl?: string;
   gigSlug?: string;
   sellerUsername?: string;

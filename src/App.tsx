@@ -3054,12 +3054,18 @@ export default function App({ initialPath, initialData }: { initialPath?: string
         {isProjectDetail && currentProject && (
           <ProjectDetailView
             project={currentProject}
-            currentUser={currentUser}
+            currentUser={impersonatedUser || currentUser}
             navigate={navigate}
             onSubmitProposal={(projectId, bidAmount, deliveryDays, coverLetter) => {
               handleSubmitProposalDirect(projectId, bidAmount, deliveryDays, coverLetter);
             }}
             allProjects={projects}
+            proposals={proposals}
+            orders={orders}
+            onRefresh={refresh}
+            onContactBuyer={(buyerId, buyerName, projectTitle, projectId) => {
+              handleContactSeller(buyerId, buyerName, projectTitle, undefined, projectId);
+            }}
           />
         )}
 

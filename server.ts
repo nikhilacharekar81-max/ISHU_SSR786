@@ -1142,6 +1142,8 @@ interface Proposal {
   deliveryDays: number;
   createdAt: string;
   status: 'pending' | 'accepted' | 'rejected';
+  workstreamOrderId?: string;
+  offerId?: string;
 }
 
 interface Order {
@@ -1164,6 +1166,7 @@ interface Order {
   escrowProtectionEndDate?: string;
   gigId?: string;
   projectId?: string;
+  proposalId?: string;
   serviceUrl?: string;
   gigSlug?: string;
   sellerUsername?: string;
@@ -1305,6 +1308,8 @@ interface Message {
     reply?: any;
     offerId?: string;
     offerKind?: string;
+    proposalId?: string;
+    status?: string;
   };
 }
 
@@ -1581,6 +1586,7 @@ const ORDERS_FILE = path.join(DATA_DIR, 'workstream_orders.json');
 const REVIEWS_FILE = path.join(DATA_DIR, 'workstream_reviews.json');
 const REFUNDS_FILE = path.join(DATA_DIR, 'workstream_refunds.json');
 const DISPUTES_FILE = path.join(DATA_DIR, 'workstream_disputes.json');
+const PROPOSALS_FILE = path.join(DATA_DIR, 'workstream_proposals.json');
 const UPLOAD_INDEX_FILE = path.join(DATA_DIR, 'workstream_uploads.json'); // Added for completeness
 
 function ensureDataDirectory() {
@@ -1616,6 +1622,7 @@ export function saveOrdersToDisk() { writeJsonAtomic(ORDERS_FILE, orders); }
 export function saveReviewsToDisk() { writeJsonAtomic(REVIEWS_FILE, reviews); }
 export function saveRefundsToDisk() { writeJsonAtomic(REFUNDS_FILE, refunds); }
 export function saveDisputesToDisk() { writeJsonAtomic(DISPUTES_FILE, disputes); }
+export function saveProposalsToDisk() { writeJsonAtomic(PROPOSALS_FILE, proposals); }
 export function saveWorkstreamUploadIndex() { writeJsonAtomic(WORKSTREAM_UPLOAD_INDEX_FILE, workstreamUploadIndex); }
 
 function handleCorruption(filePath: string, error: any) {
@@ -1772,6 +1779,20 @@ function loadInitialOrdersAndMessages() {
     }
   }
 
+  // 6. Load Proposals
+  if (fs.existsSync(PROPOSALS_FILE)) {
+    try {
+      const data = fs.readFileSync(PROPOSALS_FILE, 'utf-8');
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const parsedIds = new Set(parsed.map((p: any) => p.id));
+        proposals = [...parsed, ...SEED_PROPOSALS.filter(p => !parsedIds.has(p.id))];
+      }
+    } catch (e) {
+      console.error('Failed to load proposals file:', e);
+    }
+  }
+
   // One-time migration & Index Population
   let messagesMigrated = false;
   for (const msg of messages) {
@@ -1836,7 +1857,7 @@ function enrichOrderWithServiceInfo(o: Order, isAdmin: boolean = false) {
   const sellerUsername = o.sellerUsername || gig?.freelancerUsername || (seller?.username || seller?.name || '').toLowerCase().replace(/\s+/g, '_');
   const buyerUsername = o.buyerUsername || (buyer?.username || buyer?.name || '').toLowerCase().replace(/\s+/g, '_');
   const gigSlug = o.gigSlug || gig?.slug;
-  const serviceUrl = o.serviceUrl || (gig && gigSlug ? `/${sellerUsername}/${gigSlug}` : project ? `/project/${project.slug}` : undefined);
+  const serviceUrl = o.serviceUrl || (gig && gigSlug ? `/${sellerUsername}/${gigSlug}` : project ? `/projects/${project.id}` : undefined);
   const serviceTitle = gig?.title || project?.title || o.serviceTitle || o.title;
   const serviceThumbnail = o.serviceThumbnail || gig?.image || 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=800&h=500&fit=crop';
 
@@ -2241,14 +2262,12 @@ function fundOrderEscrowWithEvent(params: { orderId: string; orderTitle: string;
       orderId: order.id,
       senderId: 'system',
       senderName: 'WorkSphere Escrow Desk',
-      text: `🔒 Escrow funded ($${params.amount}) for Order #${order.id}.`,
+      text: 'Your payment is safely held in escrow.',
       timestamp: new Date().toISOString(),
       type: 'system',
       metadata: { action: 'escrow_funded', amount: params.amount }
     };
-    recordMessage(sysMsg);
-    saveMessagesToDisk();
-    broadcastMessage(sysMsg, order.id);
+    emitSystemEvent(order.id, 'escrow_funded', 'Your payment is safely held in escrow.', { amount: params.amount });
   }
   return res;
 }
@@ -2267,6 +2286,8 @@ function releaseOrderFunds(order: Order, actor: string, reason: string, requestK
   }
   assertOrderOpen(order);
   const result = financeLedger.releaseEscrow({ orderId: order.id, actor, reason, requestKey });
+  emitSystemEvent(order.id, 'escrow_released', 'The payment has been released.');
+
   order.status = 'completed';
   if (!order.completedAt) {
     order.completedAt = new Date().toISOString();
@@ -2274,28 +2295,22 @@ function releaseOrderFunds(order: Order, actor: string, reason: string, requestK
   if (Array.isArray(order.deliveryHistory) && order.deliveryHistory.length > 0) {
     order.acceptedVersion = order.deliveryHistory[order.deliveryHistory.length - 1].version;
   }
+  emitSystemEvent(order.id, 'order_completed', 'Your order is complete.');
+
   const seller = users.find(u => u.id === order.sellerId);
   if (seller && !releaseCompletedOrders.has(order.id)) {
     releaseCompletedOrders.add(order.id);
     seller.earned = (seller.earned || 0) + result.freelancerNet;
     seller.completedJobs = (seller.completedJobs || 0) + 1;
+    emitSystemEvent(order.id, 'wallet_credited', 'The seller has been paid.');
   }
   syncUserBalances();
   saveOrdersToDisk();
 
-  const sysMsg: Message = {
-    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-    orderId: order.id,
-    senderId: 'system',
-    senderName: 'WorkSphere Review Desk',
-    text: `✅ Deliverable approved and order completed.`,
-    timestamp: new Date().toISOString(),
-    type: 'system',
-    metadata: { action: 'deliverable_approved', freelancerNet: result.freelancerNet }
-  };
-  recordMessage(sysMsg);
-  saveMessagesToDisk();
-  broadcastMessage(sysMsg, order.id);
+  // If this was a buyer-triggered approval, emit deliverable_approved
+  if (reason === 'Buyer approved work') {
+    emitSystemEvent(order.id, 'deliverable_approved', 'Deliverable approved by buyer.', { freelancerNet: result.freelancerNet });
+  }
 
   if (requestKey) requestKeyCache.set(requestKey, result);
   return result;
@@ -2338,19 +2353,10 @@ function refundOrderFunds(order: Order, amount: number | undefined, actor: strin
   saveOrdersToDisk();
   saveRefundsToDisk();
 
-  const sysMsg: Message = {
-    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-    orderId: order.id,
-    senderId: 'system',
-    senderName: 'WorkSphere Escrow Desk',
-    text: `💸 Escrow refunded ($${result.refunded}) to buyer. Reason: ${reason}`,
-    timestamp: new Date().toISOString(),
-    type: 'system',
-    metadata: { action: 'escrow_refunded', refunded: result.refunded }
-  };
-  recordMessage(sysMsg);
-  saveMessagesToDisk();
-  broadcastMessage(sysMsg, order.id);
+  emitSystemEvent(order.id, 'escrow_refunded', `💸 Escrow refunded ($${result.refunded}) to buyer. Reason: ${reason}`, { refunded: result.refunded });
+  if (order.status === 'cancelled') {
+    emitSystemEvent(order.id, 'order_cancelled', 'Order has been cancelled.');
+  }
 
   if (requestKey) requestKeyCache.set(requestKey, result);
   return result;
@@ -2461,6 +2467,26 @@ app.get('/api/my/projects', requireAuth, (req, res) => {
   const myProjects = projects.filter(p => p.buyerId === authUserId);
   res.json(myProjects);
 });
+function enrichProposalWithWorkstream(p: Proposal): Proposal {
+  let workstreamOrderId = p.workstreamOrderId;
+  let offerId = p.offerId;
+  if (!workstreamOrderId) {
+    const matchedOrder = orders.find(o => o.proposalId === p.id) ||
+      orders.find(o => o.projectId === p.projectId && o.sellerId === p.freelancerId && !['cancelled'].includes(o.status));
+    if (matchedOrder) workstreamOrderId = matchedOrder.id;
+  }
+  if (!offerId && workstreamOrderId) {
+    const matchedOffer = workstreamOffers.find(of => of.proposalId === p.id) ||
+      workstreamOffers.find(of => of.orderId === workstreamOrderId && of.kind === 'proposal');
+    if (matchedOffer) offerId = matchedOffer.id;
+  }
+  return {
+    ...p,
+    ...(workstreamOrderId ? { workstreamOrderId } : {}),
+    ...(offerId ? { offerId } : {})
+  };
+}
+
 app.get('/api/proposals', (req, res) => {
   const authUserId = resolveAuthenticatedUserId(req);
   if (!authUserId) {
@@ -2473,7 +2499,7 @@ app.get('/api/proposals', (req, res) => {
     isAdmin ||
     p.freelancerId === authUserId ||
     projects.some(pr => pr.id === p.projectId && pr.buyerId === authUserId));
-  res.json(userProposals);
+  res.json(userProposals.map(enrichProposalWithWorkstream));
 });
 
 app.get('/api/orders', requireAuth, (req, res) => {
@@ -2655,25 +2681,15 @@ app.post('/api/orders/:id/deliverable', requireAuth, (req, res) => {
     if (uploadedFiles.length > 0) summaryParts.push(uploadedFiles.map((f: any) => `"${f.name}" (${f.size})`).join(', '));
     if (storedReference) summaryParts.push(`Reference: ${storedReference}`);
     const fileSummary = summaryParts.length > 0 ? summaryParts.join(' | ') : 'written completion update';
-    const sysMsg: Message = {
-      id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-      orderId: order.id,
-      senderId: 'system',
-      senderName: 'WorkSphere Deliveries',
-      text: `📦 Invoice (v${version}) submitted: ${fileSummary}${sanitizedNotes ? ` — "${sanitizedNotes}"` : ''}. Buyer review window initiated.`,
-      timestamp: new Date().toISOString(),
-      type: 'system',
-      metadata: {
-        action: 'deliverable_submitted',
+    
+    if (!isDraft) {
+      emitSystemEvent(order.id, 'deliverable_submitted', 'Final invoice submitted.', {
         version,
         notes: sanitizedNotes,
         reference: storedReference || undefined
-      }
-    };
-    recordMessage(sysMsg);
-    saveMessagesToDisk();
+      });
+    }
     saveOrdersToDisk();
-    broadcastMessage(sysMsg, order.id);
 
     res.json({ success: true, files: uploadedFiles, file: uploadedFiles[0], order: enrichOrderWithServiceInfo(order) });
   } catch (err: any) {
@@ -2723,25 +2739,12 @@ app.post('/api/orders/:id/revision', requireAuth, (req, res) => {
   order.revisions.push(revisionEntry);
   order.status = 'revision';
 
-  const sysMsg: Message = {
-    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-    orderId: order.id,
-    senderId: 'system',
-    senderName: 'WorkSphere Revision Desk',
-    text: `🔄 Revision requested on delivery v${revisionEntry.deliveryVersion}: "${reason}"`,
-    timestamp: new Date().toISOString(),
-    type: 'system',
-    metadata: {
-      action: 'revision_requested',
-      reason,
-      revisionId: revisionEntry.id,
-      deliveryVersion: revisionEntry.deliveryVersion
-    }
-  };
-  recordMessage(sysMsg);
-  saveMessagesToDisk();
   saveOrdersToDisk();
-  broadcastMessage(sysMsg, order.id);
+
+  emitSystemEvent(order.id, 'revision_requested', `Revision requested: "${reason}"`, {
+    revisionId: revisionEntry.id,
+    deliveryVersion: revisionEntry.deliveryVersion
+  });
 
     res.json({ success: true, revision: revisionEntry, order: enrichOrderWithServiceInfo(order) });
   } catch (err: any) {
@@ -3343,7 +3346,7 @@ app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), (re
     return res.status(403).json({ error: 'Unauthorized: Missing signature' });
   }
 
-  const hmac = crypto.createHmac('sha256', secret);
+  const hmac = createHmac('sha256', secret);
   hmac.update(req.body);
   const calculatedSignature = hmac.digest('hex');
 
@@ -5741,13 +5744,19 @@ app.patch('/api/gigs/:id/feature', requireAuth, (req, res) => {
  */
 function openProjectChat(project: any, freelancer: any, proposal: Proposal): string | undefined {
   try {
-    if (!project || !['open', 'published'].includes(project.status)) return undefined;
+    if (!project || !['open', 'published', 'in_progress'].includes(project.status)) return undefined;
     const owner = users.find(u => u.id === project.buyerId);
     if (!owner || owner.status !== 'active' || owner.id === freelancer.id) return undefined;
 
+    // Each accepted proposal / freelancer engagement has its own independent Order & Workstream.
+    // Only reuse an existing unfunded inquiry order for this specific (project, buyer, freelancer) if one has not yet been funded.
     let order: Order | undefined = orders.find(o =>
-      o.projectId === project.id && o.buyerId === owner.id && o.sellerId === freelancer.id &&
-      !['completed', 'cancelled'].includes(o.status));
+      o.projectId === project.id &&
+      o.buyerId === owner.id &&
+      o.sellerId === freelancer.id &&
+      o.status === 'in_progress' &&
+      !orderHasEscrow(o.id) &&
+      (!o.proposalId || o.proposalId === proposal.id));
     if (!order) {
       const created: Order = {
         id: 'ord_' + randomUUID().slice(0, 12),
@@ -5756,16 +5765,40 @@ function openProjectChat(project: any, freelancer: any, proposal: Proposal): str
         amount: 0, status: 'in_progress',
         createdAt: new Date().toISOString().split('T')[0],
         dueDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
-        projectId: project.id
+        projectId: project.id,
+        proposalId: proposal.id
       };
       order = enrichOrderWithServiceInfo(created) as Order;
       recordOrder(order);
       saveOrdersToDisk();
+    } else {
+      order.proposalId = proposal.id;
+      saveOrdersToDisk();
     }
 
-    const sym = siteSettings.getFlattenedSettings().currencySymbol || '$';
+    const offer: WorkstreamOffer = {
+      id: 'off_' + randomUUID().slice(0, 12),
+      number: `PRP-${String(workstreamOffers.filter(o => o.kind === 'proposal').length + 1001)}`,
+      orderId: order.id,
+      proposalId: proposal.id,
+      kind: 'proposal',
+      title: project.title,
+      amount: proposal.bidAmount,
+      deliveryDays: proposal.deliveryDays,
+      note: proposal.coverLetter ? proposal.coverLetter.slice(0, 1000) : undefined,
+      status: 'pending',
+      createdBy: freelancer.id,
+      createdAt: new Date().toISOString()
+    };
+    workstreamOffers.push(offer);
+    saveOffersToDisk();
+
+    proposal.workstreamOrderId = order.id;
+    proposal.offerId = offer.id;
+    saveProposalsToDisk();
+
     const days = proposal.deliveryDays;
-    const text = `Proposal for "${project.title}"\nBid: ${sym}${proposal.bidAmount} · Delivery: ${days} day${days === 1 ? '' : 's'}\n\n${proposal.coverLetter}`.slice(0, 5000);
+    const text = `Proposal for "${project.title}"\nBid: $${proposal.bidAmount} · Delivery: ${days} day${days === 1 ? '' : 's'}\n\n${proposal.coverLetter}`.slice(0, 5000);
     const msg: Message = {
       id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       orderId: order.id,
@@ -5774,18 +5807,9 @@ function openProjectChat(project: any, freelancer: any, proposal: Proposal): str
       text,
       timestamp: new Date().toISOString(),
       type: 'message',
-      metadata: { action: 'project_proposal' }
+      metadata: { action: 'offer_created', offerId: offer.id, offerKind: 'proposal', proposalId: proposal.id }
     };
-    const offer: WorkstreamOffer = {
-      id: 'off_' + randomUUID().slice(0, 12),
-      number: `PROP-${String(workstreamOffers.filter(o => o.kind === 'proposal').length + 1001)}`,
-      orderId: order.id, kind: 'proposal',
-      title: project.title, amount: proposal.bidAmount, deliveryDays: proposal.deliveryDays,
-      status: 'pending', createdBy: freelancer.id, createdAt: new Date().toISOString()
-    };
-    workstreamOffers.push(offer);
-    saveOffersToDisk();
-    
+
     recordMessage(msg);
     saveMessagesToDisk();
     broadcastMessage(msg, order.id);
@@ -5801,24 +5825,35 @@ app.post('/api/proposals', requireAuth, (req, res) => {
   const caller = (req as any).authenticatedUser || users.find(u => u.id === authUserId);
   if (!caller || caller.status !== 'active') return res.status(403).json({ error: 'Account is not active' });
 
+  const proj = projects.find(p => p.id === req.body.projectId);
+  if (!proj) return res.status(404).json({ error: 'Project not found.' });
+  if (proj.buyerId === caller.id) {
+    return res.status(400).json({ error: 'You cannot submit a proposal to your own project.' });
+  }
+  const bidAmount = Math.round(Number(req.body.bidAmount) * 100) / 100;
+  if (!Number.isFinite(bidAmount) || bidAmount <= 0) {
+    return res.status(400).json({ error: 'Enter a valid USD bid amount.' });
+  }
+  const deliveryDays = Math.max(1, Math.min(365, Math.round(Number(req.body.deliveryDays) || 7)));
+
   const newProp: Proposal = {
-    id: 'prop_' + Date.now(),
+    id: 'prop_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
     projectId: req.body.projectId,
     freelancerId: caller.id,
     freelancerName: caller.name,
     freelancerAvatar: caller.avatar,
     freelancerTitle: caller.title || 'Senior Engineer',
     coverLetter: typeof req.body.coverLetter === 'string' ? req.body.coverLetter.trim() : '',
-    bidAmount: Number(req.body.bidAmount),
-    deliveryDays: Number(req.body.deliveryDays),
+    bidAmount,
+    deliveryDays,
     createdAt: new Date().toISOString().split('T')[0],
     status: 'pending'
   };
   proposals.unshift(newProp);
-  const proj = projects.find(p => p.id === req.body.projectId);
-  if (proj) proj.proposalsCount += 1;
+  proj.proposalsCount += 1;
   const workstreamOrderId = openProjectChat(proj, caller, newProp);
-  res.json({ ...newProp, workstreamOrderId });
+  saveProposalsToDisk();
+  res.json({ ...newProp, workstreamOrderId, offerId: newProp.offerId });
 });
 
 app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
@@ -5886,6 +5921,7 @@ app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
     const enriched = enrichOrderWithServiceInfo(newOrd);
     recordOrder(enriched);
     saveOrdersToDisk();
+    emitSystemEvent(newOrd.id, 'order_created', `Order #${newOrd.id} created.`);
     if (!isInquiry) {
       // Open the workstream with a record of the purchase (and the brief, if one was given) so it is never an empty thread.
       const opening: Array<{ senderId: string; senderName: string; text: string; type: 'system' | 'message' }> = [{
@@ -5918,6 +5954,7 @@ interface WorkstreamOffer {
   id: string;
   number: string;
   orderId: string;
+  proposalId?: string;
   kind: WorkstreamOfferKind;
   title: string;
   amount: number;
@@ -5949,6 +5986,15 @@ const FUNDED_STATUSES = ['funded_in_escrow', 'delivered', 'revision', 'completed
 
 function orderHasEscrow(orderId: string): boolean {
   return !!financeLedger.getEscrow(orderId);
+}
+
+function findLinkedProposalForOffer(offer: WorkstreamOffer, order: Order): Proposal | undefined {
+  return proposals.find(p =>
+    (offer.proposalId && p.id === offer.proposalId) ||
+    p.offerId === offer.id ||
+    (order.proposalId && p.id === order.proposalId) ||
+    (order.projectId && p.projectId === order.projectId && p.freelancerId === order.sellerId && p.status === 'pending')
+  );
 }
 
 function viewOffer(o: WorkstreamOffer) {
@@ -6093,6 +6139,13 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
     if (action === 'cancel') {
       if (caller.id !== order.sellerId) return res.status(403).json({ error: 'Only the seller can cancel this.' });
       offer.status = 'cancelled'; offer.resolvedAt = now; offer.resolvedBy = caller.id;
+      if (offer.kind === 'proposal') {
+        const linkedProp = findLinkedProposalForOffer(offer, order);
+        if (linkedProp && linkedProp.status === 'pending') {
+          linkedProp.status = 'rejected';
+          saveProposalsToDisk();
+        }
+      }
       if (offer.kind === 'invoice' && (order.status === 'delivered' || order.status === 'draft_review')) {
         const otherPendingInvoice = workstreamOffers.some(o => o.orderId === order.id && o.id !== offer.id && o.kind === 'invoice' && o.status === 'pending');
         if (!otherPendingInvoice && orderHasEscrow(order.id)) {
@@ -6114,6 +6167,13 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
 
     if (action === 'decline') {
       offer.status = 'declined'; offer.resolvedAt = now; offer.resolvedBy = caller.id;
+      if (offer.kind === 'proposal') {
+        const linkedProp = findLinkedProposalForOffer(offer, order);
+        if (linkedProp) {
+          linkedProp.status = 'rejected';
+          saveProposalsToDisk();
+        }
+      }
       saveOffersToDisk();
       postOfferMessage(order, offer, null, `${offer.number} was declined by the buyer.`, 'offer_declined');
       return res.json({ offer: viewOffer(offer) });
@@ -6199,6 +6259,16 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
       }
       offer.orderId = order.id;
       offer.status = 'accepted';
+      if (offer.kind === 'proposal') {
+        const linkedProp = findLinkedProposalForOffer(offer, order);
+        if (linkedProp) {
+          linkedProp.status = 'accepted';
+          linkedProp.workstreamOrderId = order.id;
+          linkedProp.offerId = offer.id;
+          order.proposalId = linkedProp.id;
+          saveProposalsToDisk();
+        }
+      }
       postOfferMessage(order, offer, null, `${offer.number} was accepted and escrow was funded ($${offer.amount}).`, 'offer_accepted');
     } else {
       // Escrow is already funded: top up existing order's escrow directly under the primary orderId (no secondary order ID).
@@ -6217,6 +6287,15 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
       }
       offer.orderId = order.id;
       offer.status = 'accepted';
+      if (offer.kind === 'proposal') {
+        const linkedProp = findLinkedProposalForOffer(offer, order);
+        if (linkedProp) {
+          linkedProp.status = 'accepted';
+          linkedProp.workstreamOrderId = order.id;
+          linkedProp.offerId = offer.id;
+          saveProposalsToDisk();
+        }
+      }
       postOfferMessage(order, offer, null, `${offer.number} was accepted and escrow was topped up with $${offer.amount}. All funds and milestones remain unified under Order #${order.id}.`, 'offer_accepted');
     }
 
@@ -6228,6 +6307,143 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
   } catch (err: any) {
     // fundEscrow throws on insufficient balance, frozen wallets, below-minimum amounts, etc. Nothing was changed.
     res.status(400).json({ error: err.message });
+  } finally {
+    releaseOrderLock(order.id);
+  }
+});
+
+// Direct Buyer Proposal Accept / Decline Endpoint (supports hiring multiple freelancers on the same project)
+app.post('/api/proposals/:id/:action(accept|decline)', requireAuth, rateLimit(20, 60_000), (req, res) => {
+  const proposal = proposals.find(p => p.id === req.params.id);
+  if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+
+  const project = projects.find(p => p.id === proposal.projectId);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  const caller = offerCaller(req);
+  if (!caller || caller.status !== 'active') return res.status(403).json({ error: 'Account is not active' });
+  if (caller.id !== project.buyerId) {
+    return res.status(403).json({ error: 'Only the project buyer can accept or decline proposals.' });
+  }
+
+  const freelancer = users.find(u => u.id === proposal.freelancerId);
+  if (!freelancer || freelancer.status !== 'active') {
+    return res.status(400).json({ error: 'Freelancer account is not active.' });
+  }
+
+  const action = req.params.action as 'accept' | 'decline';
+  const now = new Date().toISOString();
+
+  // Ensure an independent Order and WorkstreamOffer exist for this specific proposal
+  let order = (proposal.workstreamOrderId ? orders.find(o => o.id === proposal.workstreamOrderId) : undefined) ||
+    orders.find(o => o.proposalId === proposal.id) ||
+    orders.find(o => o.projectId === project.id && o.buyerId === project.buyerId && o.sellerId === freelancer.id && o.status === 'in_progress' && !orderHasEscrow(o.id));
+
+  if (!order && action === 'accept') {
+    const workstreamOrderId = openProjectChat(project, freelancer, proposal);
+    if (workstreamOrderId) {
+      order = orders.find(o => o.id === workstreamOrderId);
+    }
+  }
+
+  let offer = (proposal.offerId ? workstreamOffers.find(of => of.id === proposal.offerId) : undefined) ||
+    workstreamOffers.find(of => of.proposalId === proposal.id) ||
+    (order ? workstreamOffers.find(of => of.orderId === order!.id && of.kind === 'proposal' && of.status === 'pending') : undefined);
+
+  if (action === 'decline') {
+    if (proposal.status === 'accepted') {
+      return res.status(409).json({ error: 'Cannot decline a proposal that has already been accepted and funded.' });
+    }
+    proposal.status = 'rejected';
+    saveProposalsToDisk();
+    if (offer && offer.status === 'pending' && order) {
+      offer.status = 'declined';
+      offer.resolvedAt = now;
+      offer.resolvedBy = caller.id;
+      saveOffersToDisk();
+      postOfferMessage(order, offer, null, `${offer.number} was declined by the buyer.`, 'offer_declined');
+    }
+    return res.json({ proposal: enrichProposalWithWorkstream(proposal), offer: offer ? viewOffer(offer) : undefined });
+  }
+
+  // ----- accept: create/fund independent Workstream Order for this Freelancer in USD -----
+  if (proposal.status === 'accepted' && order && orderHasEscrow(order.id)) {
+    return res.status(409).json({ error: 'This proposal has already been accepted and funded.' });
+  }
+  if (!order) {
+    return res.status(400).json({ error: 'Could not initialize workstream order for this proposal.' });
+  }
+
+  acquireOrderLock(order.id);
+  try {
+    ensureWallet(order.buyerId);
+    ensureWallet(order.sellerId);
+    const today = now.split('T')[0];
+    const protectionEnd = new Date(Date.now() + siteSettings.getSettings().commission.escrowProtectionDays * 86400000).toISOString().split('T')[0];
+
+    if (!offer) {
+      offer = {
+        id: 'off_' + randomUUID().slice(0, 12),
+        number: `PRP-${String(workstreamOffers.filter(o => o.kind === 'proposal').length + 1001)}`,
+        orderId: order.id,
+        proposalId: proposal.id,
+        kind: 'proposal',
+        title: project.title,
+        amount: proposal.bidAmount,
+        deliveryDays: proposal.deliveryDays,
+        note: proposal.coverLetter ? proposal.coverLetter.slice(0, 1000) : undefined,
+        status: 'pending',
+        createdBy: freelancer.id,
+        createdAt: now
+      };
+      workstreamOffers.push(offer);
+    }
+
+    const amountUsd = Number(proposal.bidAmount);
+    if (!orderHasEscrow(order.id)) {
+      fundOrderEscrowWithEvent({
+        orderId: order.id,
+        orderTitle: project.title,
+        amount: amountUsd,
+        buyerId: order.buyerId,
+        sellerId: order.sellerId,
+        actor: `user:${order.buyerId}`
+      });
+      order.title = project.title;
+      order.amount = amountUsd;
+      order.status = 'funded_in_escrow';
+      order.projectId = project.id;
+      order.proposalId = proposal.id;
+      order.escrowProtectionStartDate = today;
+      order.escrowProtectionEndDate = protectionEnd;
+      order.feeBreakdown = financeLedger.quoteOrder(amountUsd);
+      if (proposal.deliveryDays) {
+        order.dueDate = new Date(Date.now() + proposal.deliveryDays * 86400000).toISOString().split('T')[0];
+      }
+      offer.status = 'accepted';
+      offer.resolvedAt = now;
+      offer.resolvedBy = caller.id;
+      proposal.status = 'accepted';
+      proposal.workstreamOrderId = order.id;
+      proposal.offerId = offer.id;
+      postOfferMessage(order, offer, null, `${offer.number} was accepted and escrow was funded ($${amountUsd}).`, 'offer_accepted');
+    } else {
+      return res.status(409).json({ error: 'Escrow is already funded for this proposal workstream.' });
+    }
+
+    syncUserBalances();
+    saveOrdersToDisk();
+    saveOffersToDisk();
+    saveProposalsToDisk();
+
+    return res.json({
+      proposal: enrichProposalWithWorkstream(proposal),
+      offer: viewOffer(offer),
+      order: enrichOrderWithServiceInfo(order),
+      workstreamOrderId: order.id
+    });
+  } catch (err: any) {
+    return res.status(400).json({ error: err.message });
   } finally {
     releaseOrderLock(order.id);
   }
@@ -6545,6 +6761,7 @@ app.post('/api/admin/tickets/:id/reply', requireAdmin, (req, res) => {
 });
 
 // WebSocket Real-Time Chat Server
+// WebSocket Real-Time Chat Server
 function broadcastMessage(message: Message, orderId: string) {
   const payload = JSON.stringify({ type: 'MESSAGE_RECEIVED', message });
   const updatePayload = JSON.stringify({ 
@@ -6569,6 +6786,22 @@ function broadcastMessage(message: Message, orderId: string) {
       }
     }
   }
+}
+
+function emitSystemEvent(orderId: string, action: string, text: string, metadata: Record<string, any> = {}) {
+  const sysMsg: Message = {
+    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+    orderId,
+    senderId: 'system',
+    senderName: 'WorkSphere System',
+    text,
+    timestamp: new Date().toISOString(),
+    type: 'system',
+    metadata: { ...metadata, action }
+  };
+  recordMessage(sysMsg);
+  saveMessagesToDisk();
+  broadcastMessage(sysMsg, orderId);
 }
 
 function disconnectUserSockets(userId: string, reason = 'Session invalidated') {

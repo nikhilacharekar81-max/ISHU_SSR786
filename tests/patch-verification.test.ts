@@ -287,7 +287,125 @@ async function runTests() {
   assert.ok(balanceDiff >= 300, `Buyer wallet must be charged at least $300 (actual: ${balanceDiff})`);
   console.log('✅ Test 9: Final Invoice amount disagreement with escrow resolved (differential top-up, direct release lock, full $800 release)');
 
-  console.log('\n🎉 ALL 9 PATCH VERIFICATION TESTS PASSED SUCCESSFULLY!');
+  // 10. ONE PROJECT -> MANY PROPOSALS -> MANY ACCEPTED FREELANCERS -> SEPARATE WORKSTREAMS (USD ONLY)
+  const sellerBToken = await demoToken('user_2');
+  const sellerCToken = await demoToken('user_3');
+  const sellerDToken = await demoToken('user_4');
+  const sellerAToken = await demoToken('user_5');
+
+  // Ensure buyer has sufficient USD balance for hiring multiple freelancers
+  await api('/api/payments/deposit', { method: 'POST', token: buyerToken, body: { userId: 'user_1', amount: 3000 } });
+
+  const multiProjRes = await api('/api/projects', {
+    method: 'POST',
+    token: buyerToken,
+    body: {
+      title: 'Build my e-commerce website',
+      category: 'Development & IT',
+      subcategory: 'Full-Stack Web',
+      budgetMin: 400,
+      budgetMax: 800,
+      description: 'Need frontend, backend, and QA specialists in USD'
+    }
+  });
+  assert.strictEqual(multiProjRes.status, 200, 'Multi-freelancer project created');
+  const multiProj = multiProjRes.json;
+
+  // Submit 4 proposals from 4 different freelancers on the SAME project
+  const propARes = await api('/api/proposals', {
+    method: 'POST', token: sellerAToken,
+    body: { projectId: multiProj.id, bidAmount: 500, deliveryDays: 7, coverLetter: 'Freelancer A proposal ($500 USD)' }
+  });
+  const propBRes = await api('/api/proposals', {
+    method: 'POST', token: sellerBToken,
+    body: { projectId: multiProj.id, bidAmount: 450, deliveryDays: 5, coverLetter: 'Freelancer B proposal ($450 USD)' }
+  });
+  const propCRes = await api('/api/proposals', {
+    method: 'POST', token: sellerCToken,
+    body: { projectId: multiProj.id, bidAmount: 600, deliveryDays: 10, coverLetter: 'Freelancer C proposal ($600 USD)' }
+  });
+  const propDRes = await api('/api/proposals', {
+    method: 'POST', token: sellerDToken,
+    body: { projectId: multiProj.id, bidAmount: 550, deliveryDays: 6, coverLetter: 'Freelancer D proposal ($550 USD)' }
+  });
+
+  assert.strictEqual(propARes.status, 200);
+  assert.strictEqual(propBRes.status, 200);
+  assert.strictEqual(propCRes.status, 200);
+  assert.strictEqual(propDRes.status, 200);
+
+  // Verify each proposal has its own ID, own workstreamOrderId, and offer_created message metadata
+  const wsOrderIds = new Set([
+    propARes.json.workstreamOrderId,
+    propBRes.json.workstreamOrderId,
+    propCRes.json.workstreamOrderId,
+    propDRes.json.workstreamOrderId
+  ]);
+  assert.strictEqual(wsOrderIds.size, 4, 'Every freelancer proposal must have its own separate Workstream Order ID');
+
+  const msgsB = await api(`/api/messages/${propBRes.json.workstreamOrderId}`, { token: buyerToken });
+  assert.ok(
+    msgsB.json.some((m: any) => m.metadata?.action === 'offer_created' && m.metadata?.offerId === propBRes.json.offerId),
+    'Workstream B must contain offer_created message with offerId so the interactive Proposal Card renders'
+  );
+
+  // Buyer accepts Proposal B via POST /api/proposals/:id/accept
+  const acceptB = await api(`/api/proposals/${propBRes.json.id}/accept`, { method: 'POST', token: buyerToken });
+  assert.strictEqual(acceptB.status, 200, 'Accepting Proposal B must succeed');
+  assert.strictEqual(acceptB.json.proposal.status, 'accepted');
+  assert.strictEqual(acceptB.json.order.status, 'funded_in_escrow');
+  assert.strictEqual(acceptB.json.order.amount, 450);
+  assert.strictEqual(acceptB.json.order.sellerId, 'user_2');
+  assert.strictEqual(acceptB.json.order.projectId, multiProj.id);
+
+  // Buyer ALSO accepts Proposal C on the SAME project via Workstream Offer accept (POST /api/offers/:id/accept)
+  const acceptC = await api(`/api/offers/${propCRes.json.offerId}/accept`, { method: 'POST', token: buyerToken });
+  assert.strictEqual(acceptC.status, 200, 'Accepting Proposal C on the same project must succeed');
+  assert.strictEqual(acceptC.json.order.status, 'funded_in_escrow');
+  assert.strictEqual(acceptC.json.order.amount, 600);
+  assert.strictEqual(acceptC.json.order.sellerId, 'user_3');
+  assert.strictEqual(acceptC.json.order.projectId, multiProj.id);
+  assert.notStrictEqual(acceptC.json.order.id, acceptB.json.order.id, 'Workstream C and Workstream B must have different Order IDs');
+
+  // Buyer declines Proposal D
+  const declineD = await api(`/api/proposals/${propDRes.json.id}/decline`, { method: 'POST', token: buyerToken });
+  assert.strictEqual(declineD.status, 200, 'Declining Proposal D must succeed');
+  assert.strictEqual(declineD.json.proposal.status, 'rejected');
+
+  // Verify GET /api/proposals reflects accurate statuses for all 4 proposals on the same project
+  const allPropsRes = await api('/api/proposals', { token: buyerToken });
+  const projProps = allPropsRes.json.filter((p: any) => p.projectId === multiProj.id);
+  assert.strictEqual(projProps.length, 4, 'All 4 proposals must coexist on the project');
+  assert.strictEqual(projProps.find((p: any) => p.id === propARes.json.id)?.status, 'pending');
+  assert.strictEqual(projProps.find((p: any) => p.id === propBRes.json.id)?.status, 'accepted');
+  assert.strictEqual(projProps.find((p: any) => p.id === propCRes.json.id)?.status, 'accepted');
+  assert.strictEqual(projProps.find((p: any) => p.id === propDRes.json.id)?.status, 'rejected');
+
+  // Verify Workstream B can deliver and release escrow without affecting Workstream C
+  const delivB = await api(`/api/orders/${acceptB.json.order.id}/deliverable`, {
+    method: 'POST',
+    token: sellerBToken,
+    body: { notes: 'Freelancer B final invoice delivery', reference: 'https://github.com/example/frontend' }
+  });
+  assert.strictEqual(delivB.status, 200);
+  assert.strictEqual(delivB.json.order.status, 'delivered');
+
+  const releaseB = await api('/api/payments/escrow/release', {
+    method: 'POST',
+    token: buyerToken,
+    body: { orderId: acceptB.json.order.id }
+  });
+  assert.strictEqual(releaseB.status, 200, 'Escrow release for Workstream B must succeed');
+  assert.strictEqual(releaseB.json.order.status, 'completed');
+
+  // Workstream C must still be funded_in_escrow with $600 USD
+  const orderCCheck = await api(`/api/orders/${acceptC.json.order.id}`, { token: buyerToken });
+  assert.strictEqual(orderCCheck.status, 200);
+  assert.strictEqual(orderCCheck.json.status, 'funded_in_escrow', 'Workstream C must remain independent in funded_in_escrow');
+  assert.strictEqual(orderCCheck.json.amount, 600);
+  console.log('✅ Test 10: 1 Project -> Multiple Proposals -> Multiple Accepted Freelancers -> Independent USD Workstreams verified');
+
+  console.log('\n🎉 ALL 10 PATCH VERIFICATION TESTS PASSED SUCCESSFULLY!');
   restoreData();
   process.exit(0);
 }

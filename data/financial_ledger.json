@@ -1,6 +1,152 @@
 {
   "journals": [
     {
+      "id": "JRN-d3640f42-2c3d-468b-a96c-8dc2995ae61a",
+      "reference": "ORD-ord_gig_1792385617898-RELEASE",
+      "postingDate": "2026-10-19",
+      "timestamp": "2026-10-19 04:53:37",
+      "description": "Escrow release for Order #ord_gig_1792385617898 (Gig)",
+      "eventType": "ESCROW_RELEASED_TO_FREELANCER",
+      "idempotencyKey": "IDEMP-REL-ord_gig_1792385617898",
+      "entries": [
+        {
+          "id": "ENT-d3640f42-2c3d-468b-a96c-8dc2995ae61a-1",
+          "journalId": "JRN-d3640f42-2c3d-468b-a96c-8dc2995ae61a",
+          "accountCode": "2030",
+          "accountName": "Marketplace Escrow Funds in Trust",
+          "debit": 100,
+          "credit": 0,
+          "currency": "USD",
+          "description": "Released funds held in escrow for Order #ord_gig_1792385617898",
+          "orderId": "ord_gig_1792385617898"
+        },
+        {
+          "id": "ENT-d3640f42-2c3d-468b-a96c-8dc2995ae61a-2",
+          "journalId": "JRN-d3640f42-2c3d-468b-a96c-8dc2995ae61a",
+          "accountCode": "2020",
+          "accountName": "Freelancer Wallets Payable",
+          "debit": 0,
+          "credit": 80,
+          "currency": "USD",
+          "description": "Credited net earnings to Seller (after 20% commission)",
+          "userId": "usr_g_seller_1792385617898",
+          "orderId": "ord_gig_1792385617898"
+        },
+        {
+          "id": "ENT-d3640f42-2c3d-468b-a96c-8dc2995ae61a-3",
+          "journalId": "JRN-d3640f42-2c3d-468b-a96c-8dc2995ae61a",
+          "accountCode": "4010",
+          "accountName": "Marketplace Platform Commission Fee",
+          "debit": 0,
+          "credit": 20,
+          "currency": "USD",
+          "description": "20% platform commission on Order #ord_gig_1792385617898",
+          "orderId": "ord_gig_1792385617898"
+        }
+      ],
+      "totalDebit": 100,
+      "totalCredit": 100,
+      "status": "posted",
+      "actor": "System Auto-Accept"
+    },
+    {
+      "id": "JRN-167f9a91-fa18-4626-be39-7e990a549ebf",
+      "reference": "ORD-ord_gig_1792385617898-ESCROW-LOCK",
+      "postingDate": "2026-10-19",
+      "timestamp": "2026-10-19 04:53:37",
+      "description": "Escrow funding for Order #ord_gig_1792385617898 (Gig)",
+      "eventType": "ORDER_ESCROW_FUNDED",
+      "idempotencyKey": "IDEMP-ORD-FUND-ord_gig_1792385617898",
+      "entries": [
+        {
+          "id": "ENT-167f9a91-fa18-4626-be39-7e990a549ebf-1",
+          "journalId": "JRN-167f9a91-fa18-4626-be39-7e990a549ebf",
+          "accountCode": "2010",
+          "accountName": "Buyer Wallets Payable",
+          "debit": 109,
+          "credit": 0,
+          "currency": "USD",
+          "description": "Debited buyer wallet for order price and client fees",
+          "userId": "usr_g_buyer_1792385617898",
+          "orderId": "ord_gig_1792385617898"
+        },
+        {
+          "id": "ENT-167f9a91-fa18-4626-be39-7e990a549ebf-2",
+          "journalId": "JRN-167f9a91-fa18-4626-be39-7e990a549ebf",
+          "accountCode": "2030",
+          "accountName": "Marketplace Escrow Funds in Trust",
+          "debit": 0,
+          "credit": 100,
+          "currency": "USD",
+          "description": "Locked in escrow protection vault",
+          "orderId": "ord_gig_1792385617898"
+        },
+        {
+          "id": "ENT-167f9a91-fa18-4626-be39-7e990a549ebf-3",
+          "journalId": "JRN-167f9a91-fa18-4626-be39-7e990a549ebf",
+          "accountCode": "4020",
+          "accountName": "Client Service Fee Revenue",
+          "debit": 0,
+          "credit": 5.5,
+          "currency": "USD",
+          "description": "5.5% client service fee on Order #ord_gig_1792385617898",
+          "orderId": "ord_gig_1792385617898"
+        },
+        {
+          "id": "ENT-167f9a91-fa18-4626-be39-7e990a549ebf-4",
+          "journalId": "JRN-167f9a91-fa18-4626-be39-7e990a549ebf",
+          "accountCode": "4030",
+          "accountName": "Small-Order Fee Revenue",
+          "debit": 0,
+          "credit": 3.5,
+          "currency": "USD",
+          "description": "Small-order fee ($3.50, order under $200) on Order #ord_gig_1792385617898",
+          "orderId": "ord_gig_1792385617898"
+        }
+      ],
+      "totalDebit": 109,
+      "totalCredit": 109,
+      "status": "posted",
+      "actor": "usr_g_buyer_1792385617898"
+    },
+    {
+      "id": "JRN-f38bf726-90c3-4b2b-8d42-2071d3f1a1f1",
+      "reference": "DEP-1",
+      "postingDate": "2026-10-19",
+      "timestamp": "2026-10-19 04:53:37",
+      "description": "Deposit (gateway) - Buyer",
+      "eventType": "DEPOSIT_SETTLED",
+      "idempotencyKey": "DEP-DEP-1",
+      "entries": [
+        {
+          "id": "ENT-f38bf726-90c3-4b2b-8d42-2071d3f1a1f1-1",
+          "journalId": "JRN-f38bf726-90c3-4b2b-8d42-2071d3f1a1f1",
+          "accountCode": "1020",
+          "accountName": "Payment Processor Clearing",
+          "debit": 2000,
+          "credit": 0,
+          "currency": "USD",
+          "description": "Payment processor clearing - deposit received",
+          "userId": "usr_g_buyer_1792385617898"
+        },
+        {
+          "id": "ENT-f38bf726-90c3-4b2b-8d42-2071d3f1a1f1-2",
+          "journalId": "JRN-f38bf726-90c3-4b2b-8d42-2071d3f1a1f1",
+          "accountCode": "2010",
+          "accountName": "Buyer Wallets Payable",
+          "debit": 0,
+          "credit": 2000,
+          "currency": "USD",
+          "description": "Credited Buyer available wallet",
+          "userId": "usr_g_buyer_1792385617898"
+        }
+      ],
+      "totalDebit": 2000,
+      "totalCredit": 2000,
+      "status": "posted",
+      "actor": "system"
+    },
+    {
       "id": "JRN-f6da18a9-6d16-429f-81f4-41198d007e35",
       "reference": "REV-JRN-73bd4ddf-087b-45d0-ad5a-13f504dab87b",
       "postingDate": "2026-10-18",
@@ -8252,6 +8398,47 @@
   ],
   "transactions": [
     {
+      "id": "TXN-d3640f42-2c3d-468b-a96c-8dc2995ae61a",
+      "type": "escrow_release",
+      "amount": 100,
+      "currency": "USD",
+      "timestamp": "2026-10-19 04:53:37",
+      "status": "completed",
+      "userId": "usr_g_seller_1792385617898",
+      "userName": "Seller",
+      "userRole": "freelancer",
+      "relatedOrderId": "ord_gig_1792385617898",
+      "journalId": "JRN-d3640f42-2c3d-468b-a96c-8dc2995ae61a",
+      "description": "Escrow release for Order #ord_gig_1792385617898 (Gig)"
+    },
+    {
+      "id": "TXN-167f9a91-fa18-4626-be39-7e990a549ebf",
+      "type": "escrow_fund",
+      "amount": 109,
+      "currency": "USD",
+      "timestamp": "2026-10-19 04:53:37",
+      "status": "completed",
+      "userId": "usr_g_buyer_1792385617898",
+      "userName": "Buyer",
+      "userRole": "buyer",
+      "relatedOrderId": "ord_gig_1792385617898",
+      "journalId": "JRN-167f9a91-fa18-4626-be39-7e990a549ebf",
+      "description": "Escrow funding for Order #ord_gig_1792385617898 (Gig)"
+    },
+    {
+      "id": "TXN-f38bf726-90c3-4b2b-8d42-2071d3f1a1f1",
+      "type": "deposit",
+      "amount": 2000,
+      "currency": "USD",
+      "timestamp": "2026-10-19 04:53:37",
+      "status": "completed",
+      "userId": "usr_g_buyer_1792385617898",
+      "userName": "Buyer",
+      "userRole": "buyer",
+      "journalId": "JRN-f38bf726-90c3-4b2b-8d42-2071d3f1a1f1",
+      "description": "Deposit (gateway) - Buyer"
+    },
+    {
       "id": "TXN-f6da18a9-6d16-429f-81f4-41198d007e35",
       "type": "adjustment_debit",
       "amount": 50,
@@ -11125,9 +11312,101 @@
         "lastActivityAt": "2026-10-15 10:31:51",
         "createdAt": "2026-10-15 10:31:51"
       }
+    ],
+    [
+      "usr_g_buyer_1792385605573",
+      {
+        "id": "WAL-USR_G_BUYER_1792385605573",
+        "userId": "usr_g_buyer_1792385605573",
+        "userName": "Buyer",
+        "userEmail": "b@t.com",
+        "userRole": "buyer",
+        "currency": "USD",
+        "availableBalance": 0,
+        "pendingIncoming": 0,
+        "fundsOnHold": 0,
+        "pendingWithdrawals": 0,
+        "status": "active",
+        "lastActivityAt": "2026-10-19 04:53:25",
+        "createdAt": "2026-10-19 04:53:25"
+      }
+    ],
+    [
+      "usr_g_seller_1792385605573",
+      {
+        "id": "WAL-USR_G_SELLER_1792385605573",
+        "userId": "usr_g_seller_1792385605573",
+        "userName": "Seller",
+        "userEmail": "s@t.com",
+        "userRole": "freelancer",
+        "currency": "USD",
+        "availableBalance": 0,
+        "pendingIncoming": 0,
+        "fundsOnHold": 0,
+        "pendingWithdrawals": 0,
+        "status": "active",
+        "lastActivityAt": "2026-10-19 04:53:25",
+        "createdAt": "2026-10-19 04:53:25"
+      }
+    ],
+    [
+      "usr_g_buyer_1792385617898",
+      {
+        "id": "WAL-USR_G_BUYER_1792385617898",
+        "userId": "usr_g_buyer_1792385617898",
+        "userName": "Buyer",
+        "userEmail": "b@t.com",
+        "userRole": "buyer",
+        "currency": "USD",
+        "availableBalance": 1891,
+        "pendingIncoming": 0,
+        "fundsOnHold": 100,
+        "pendingWithdrawals": 0,
+        "status": "active",
+        "lastActivityAt": "2026-10-19 04:53:37",
+        "createdAt": "2026-10-19 04:53:37"
+      }
+    ],
+    [
+      "usr_g_seller_1792385617898",
+      {
+        "id": "WAL-USR_G_SELLER_1792385617898",
+        "userId": "usr_g_seller_1792385617898",
+        "userName": "Seller",
+        "userEmail": "s@t.com",
+        "userRole": "freelancer",
+        "currency": "USD",
+        "availableBalance": 80,
+        "pendingIncoming": 0,
+        "fundsOnHold": 0,
+        "pendingWithdrawals": 0,
+        "status": "active",
+        "lastActivityAt": "2026-10-19 04:53:37",
+        "createdAt": "2026-10-19 04:53:37"
+      }
     ]
   ],
   "auditLogs": [
+    {
+      "id": "FAUD-c4f362a7-a81",
+      "actor": "usr_g_buyer_1792385617898",
+      "role": "system",
+      "action": "ESCROW_FUNDS_LOCKED",
+      "target": "Order #ord_gig_1792385617898",
+      "reason": "Locked $100.00 in escrow; client charged $109.00 total (service fee $5.50, small-order fee $3.50)",
+      "journalId": "JRN-167f9a91-fa18-4626-be39-7e990a549ebf",
+      "timestamp": "2026-10-19 04:53:37"
+    },
+    {
+      "id": "FAUD-6a5f0806-4f6",
+      "actor": "system",
+      "role": "system",
+      "action": "DEPOSIT_CONFIRMED",
+      "target": "Wallet #WAL-USR_G_BUYER_1792385617898",
+      "reason": "gateway ref DEP-1",
+      "journalId": "JRN-f38bf726-90c3-4b2b-8d42-2071d3f1a1f1",
+      "timestamp": "2026-10-19 04:53:37"
+    },
     {
       "id": "FAUD-93967865-149",
       "actor": "Super Admin",
@@ -12700,7 +12979,10 @@
     "IDEMP-ORD-FUND-ord_test_refund_1_1792317585025",
     "IDEMP-REF-ord_test_refund_1_1792317585025-1",
     "IDEMP-ADJ-ba1cf865-2643-4a21-b30b-e80904117235",
-    "IDEMP-REV-JRN-73bd4ddf-087b-45d0-ad5a-13f504dab87b"
+    "IDEMP-REV-JRN-73bd4ddf-087b-45d0-ad5a-13f504dab87b",
+    "DEP-DEP-1",
+    "IDEMP-ORD-FUND-ord_gig_1792385617898",
+    "IDEMP-REL-ord_gig_1792385617898"
   ],
   "escrows": [
     [
@@ -14181,6 +14463,26 @@
         "serviceFee": 22,
         "smallOrderFee": 0,
         "feesRefunded": true
+      }
+    ],
+    [
+      "ord_gig_1792385617898",
+      {
+        "orderId": "ord_gig_1792385617898",
+        "orderTitle": "Gig",
+        "buyerId": "usr_g_buyer_1792385617898",
+        "sellerId": "usr_g_seller_1792385617898",
+        "amount": 100,
+        "remaining": 100,
+        "refundedTotal": 0,
+        "releasedGross": 0,
+        "refundSeq": 0,
+        "status": "held",
+        "fundedAt": "2026-10-19 04:53:37",
+        "commissionPercent": 20,
+        "serviceFee": 5.5,
+        "smallOrderFee": 3.5,
+        "feesRefunded": false
       }
     ]
   ],
