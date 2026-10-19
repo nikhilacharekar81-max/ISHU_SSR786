@@ -97,14 +97,17 @@ class WorkspaceService {
     const originType = order.projectId ? 'project' : 'gig';
     const originId = order.projectId || order.gigId || order.id;
 
-    // 2. Exact Origin Match: If this order belongs to a specific Project where a Workspace was already created for this exact project and buyer/seller
+    // 2. Exact Origin Match: If this order belongs to a specific Project or Gig where a Workspace already exists
     let existing: Workspace | undefined;
-    if (order.projectId) {
+    const targetOriginId = order.projectId || order.gigId;
+    const targetOriginType = order.projectId ? 'project' : 'gig';
+
+    if (targetOriginId) {
       existing = Array.from(this.workspaces.values()).find(w =>
         w.buyerId === order.buyerId &&
         w.sellerId === order.sellerId &&
-        w.originType === 'project' &&
-        w.originId === order.projectId
+        w.originType === targetOriginType &&
+        w.originId === targetOriginId
       );
     }
 
@@ -147,6 +150,12 @@ class WorkspaceService {
       }
     }
     return { migratedCount, dryRun, details };
+  }
+
+  public deleteWorkspace(workspaceId: string) {
+    if (this.workspaces.delete(workspaceId)) {
+      this.saveToDisk();
+    }
   }
 }
 

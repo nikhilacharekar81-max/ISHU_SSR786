@@ -1149,18 +1149,20 @@ interface Proposal {
 
 interface Order {
   id: string;
+  workspaceId?: string;
+  orderType?: 'gig' | 'project';
   title: string;
   buyerId: string;
   sellerId: string;
   amount: number;
-  status: 'funded_in_escrow' | 'in_progress' | 'delivered' | 'completed' | 'disputed' | 'revision' | 'cancelled' | 'draft_review' | 'work_in_progress';
+  status: 'payment_pending' | 'funded_in_escrow' | 'in_progress' | 'delivered' | 'completed' | 'disputed' | 'revision' | 'cancelled' | 'draft_review' | 'work_in_progress';
   createdAt: string;
   completedAt?: string;
   dueDate: string;
   requirements?: string;
   deliverables?: string;
   deliverableFiles?: Array<{ id?: string; name: string; url: string; size: string; uploadedAt?: string }>;
-  revisions?: Array<{ id: string; requestedAt: string; reason: string; status: string }>;
+  revisions?: Array<{ id: string; requestedAt: string; reason: string; status: string; version?: number; deliveryVersion?: number }>;
   adminNotes?: string;
   isMuted?: boolean;
   escrowProtectionStartDate?: string;
@@ -1727,6 +1729,26 @@ function loadInitialOrdersAndMessages() {
     console.log(`[WorkspaceMigration] Migrated ${migrationRes.migratedCount} legacy orders to Workspaces on startup.`);
     saveOrdersToDisk();
     workspaceService.saveToDisk();
+  }
+
+  // RECOVERY: Reconcile any 'payment_pending' orders with the financial ledger (Crash Safety)
+  let recoveryNeeded = false;
+  for (const order of orders) {
+    if (order.status === 'payment_pending') {
+      const escrow = financeLedger.getEscrow(order.id);
+      if (escrow) {
+        console.log(`[Recovery] Order ${order.id} was in payment_pending but ledger has escrow. Recovering to funded_in_escrow.`);
+        order.status = 'funded_in_escrow';
+        recoveryNeeded = true;
+      } else {
+        console.log(`[Recovery] Order ${order.id} was in payment_pending but ledger has no escrow. Marking as cancelled (funding likely never happened).`);
+        order.status = 'cancelled';
+        recoveryNeeded = true;
+      }
+    }
+  }
+  if (recoveryNeeded) {
+    saveOrdersToDisk();
   }
 
   // 2. Load Messages
@@ -5924,85 +5946,6 @@ app.patch('/api/gigs/:id/feature', requireAuth, (req, res) => {
   res.json(g);
 });
 
-/**
- * Opens (or reuses) the private workstream between a project's owner and a freelancer who bid on it.
- * The owner is the buyer and the freelancer is the seller, so the existing proposal / escrow flow
- * (seller sends a Proposal, buyer accepts and pays into escrow) works unchanged inside this thread.
- * Returns the workstream's order id, or undefined when no chat can be opened (the bid itself still stands).
- */
-function openProjectChat(project: any, freelancer: any, proposal: Proposal): string | undefined {
-  try {
-    if (!project || !['open', 'published', 'in_progress'].includes(project.status)) return undefined;
-    const owner = users.find(u => u.id === project.buyerId);
-    if (!owner || owner.status !== 'active' || owner.id === freelancer.id) return undefined;
-
-    // Each accepted proposal / freelancer engagement has its own independent Order & Workstream.
-    // Only reuse an existing unfunded inquiry order for this specific (project, buyer, freelancer) if one has not yet been funded.
-    let order: Order | undefined = (proposal.workstreamOrderId ? orders.find(o => o.id === proposal.workstreamOrderId) : undefined) ||
-      orders.find(o => o.proposalId === proposal.id);
-    if (!order) {
-      const created: Order = {
-        id: 'ord_' + randomUUID().slice(0, 12),
-        title: `Inquiry: ${project.title}`,
-        buyerId: owner.id, sellerId: freelancer.id,
-        amount: 0, status: 'in_progress',
-        createdAt: new Date().toISOString().split('T')[0],
-        dueDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
-        projectId: project.id,
-        proposalId: proposal.id
-      };
-      order = enrichOrderWithServiceInfo(created) as Order;
-      recordOrder(order);
-      saveOrdersToDisk();
-    } else {
-      order.proposalId = proposal.id;
-      saveOrdersToDisk();
-    }
-
-    const offer: WorkstreamOffer = {
-      id: 'off_' + randomUUID().slice(0, 12),
-      number: `PRP-${String(workstreamOffers.filter(o => o.kind === 'proposal').length + 1001)}`,
-      orderId: order.id,
-      proposalId: proposal.id,
-      kind: 'proposal',
-      title: project.title,
-      amount: proposal.bidAmount,
-      deliveryDays: proposal.deliveryDays,
-      note: proposal.coverLetter ? proposal.coverLetter.slice(0, 1000) : undefined,
-      status: 'pending',
-      createdBy: freelancer.id,
-      createdAt: new Date().toISOString()
-    };
-    workstreamOffers.push(offer);
-    saveOffersToDisk();
-
-    proposal.workstreamOrderId = order.id;
-    proposal.offerId = offer.id;
-    saveProposalsToDisk();
-
-    const days = proposal.deliveryDays;
-    const text = `Proposal for "${project.title}"\nBid: $${proposal.bidAmount} · Delivery: ${days} day${days === 1 ? '' : 's'}\n\n${proposal.coverLetter}`.slice(0, 5000);
-    const msg: Message = {
-      id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-      orderId: order.id,
-      senderId: freelancer.id,
-      senderName: freelancer.name,
-      text,
-      timestamp: new Date().toISOString(),
-      type: 'message',
-      metadata: { action: 'offer_created', offerId: offer.id, offerKind: 'proposal', proposalId: proposal.id }
-    };
-
-    recordMessage(msg);
-    saveMessagesToDisk();
-    broadcastMessage(msg, order.id);
-    return order.id;
-  } catch (err) {
-    console.error('Failed to open project chat for proposal:', err);
-    return undefined;
-  }
-}
-
 app.post('/api/proposals', requireAuth, (req, res) => {
   const authUserId = (req as any).authenticatedUserId;
   const caller = (req as any).authenticatedUser || users.find(u => u.id === authUserId);
@@ -6058,7 +6001,23 @@ function processProposalAccept(req: any, res: any) {
     const caller = (req as any).authenticatedUser || users.find((u: any) => u.id === authUserId);
     if (!caller || caller.status !== 'active') return res.status(403).json({ error: 'Authentication required' });
     if (proj.buyerId !== caller.id) return res.status(403).json({ error: 'Forbidden: Only the project buyer can accept proposals.' });
-    if (proposal.status !== 'pending') return res.status(409).json({ error: `Proposal is already ${proposal.status}.` });
+    if (proposal.status !== 'pending') {
+      if (proposal.status === 'accepted' && proposal.workstreamOrderId) {
+        const existingOrder = orders.find(o => o.id === proposal.workstreamOrderId);
+        if (existingOrder) {
+          const workspace = workspaceService.getWorkspace(existingOrder.workspaceId || '');
+          const offer = workstreamOffers.find(of => of.proposalId === proposal.id);
+          return res.json({ 
+            success: true, 
+            proposal: enrichProposalWithWorkstream(proposal), 
+            order: enrichOrderWithServiceInfo(existingOrder), 
+            workspace, 
+            offer: offer ? viewOffer(offer) : undefined 
+          });
+        }
+      }
+      return res.status(409).json({ error: `Proposal is already ${proposal.status}.` });
+    }
 
     ensureWallet(proj.buyerId);
     ensureWallet(proposal.freelancerId);
@@ -6076,8 +6035,8 @@ function processProposalAccept(req: any, res: any) {
     const deliveryDays = proposal.deliveryDays || 7;
     const dueDate = new Date(Date.now() + deliveryDays * 86400000).toISOString().split('T')[0];
 
-    // Create Order object
-    const order = {
+    // Create Order object with transient status
+    const order: Order = {
       id: orderId,
       workspaceId: workspace.workspaceId,
       orderType: 'project',
@@ -6085,7 +6044,7 @@ function processProposalAccept(req: any, res: any) {
       buyerId: proj.buyerId,
       sellerId: proposal.freelancerId,
       amount: proposal.bidAmount,
-      status: 'funded_in_escrow' as const,
+      status: 'payment_pending',
       createdAt: today,
       dueDate,
       escrowProtectionStartDate: today,
@@ -6115,7 +6074,7 @@ function processProposalAccept(req: any, res: any) {
     
     // Register order in memory for message attachment
     recordOrder(order);
-    saveOrdersToDisk();
+    saveOrdersToDisk(); // CRASH SAFE POINT: Order is on disk as 'payment_pending'
     emitSystemEvent(order.id, 'order_created', `Order placed: ${order.title}. Payment is held in escrow until the work is approved.`);
     postOfferMessage(order, offer, null, `Proposal ${offer.number} was created.`, 'offer_created');
 
@@ -6129,6 +6088,10 @@ function processProposalAccept(req: any, res: any) {
         sellerId: order.sellerId,
         actor: `user:${order.buyerId}`
       });
+      
+      // Update order status to funded only AFTER ledger successfully records the escrow
+      order.status = 'funded_in_escrow';
+      saveOrdersToDisk();
     } catch (fundingErr: any) {
       // Rollback memory and disk state if funding fails (e.g. insufficient wallet balance)
       const orderIdx = orders.findIndex(o => o.id === order.id);
@@ -6138,15 +6101,17 @@ function processProposalAccept(req: any, res: any) {
       const offerIdx = workstreamOffers.findIndex(o => o.id === offer.id);
       if (offerIdx !== -1) workstreamOffers.splice(offerIdx, 1);
 
-      for (let i = workstreamMessages.length - 1; i >= 0; i--) {
-        if (workstreamMessages[i].orderId === order.id) {
-          workstreamMessages.splice(i, 1);
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].orderId === order.id) {
+          messages.splice(i, 1);
         }
       }
 
       proposal.status = 'pending';
       delete proposal.workstreamOrderId;
       delete proposal.offerId;
+
+      workspaceService.deleteWorkspace(workspace.workspaceId);
 
       saveOrdersToDisk();
       saveOffersToDisk();
@@ -6265,7 +6230,7 @@ app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
       newOrd = { id, title, buyerId, sellerId, amount: 0, status: 'in_progress', createdAt: today, dueDate: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0], gigId: req.body.gigId, projectId: req.body.projectId, ...(requirements ? { requirements } : {}) };
     } else {
       newOrd = {
-        id, title, buyerId, sellerId, amount: rawAmount, status: 'funded_in_escrow', createdAt: today,
+        id, title, buyerId, sellerId, amount: rawAmount, status: 'payment_pending', createdAt: today,
         dueDate: serverDerivedDueDate,
         escrowProtectionStartDate: today,
         escrowProtectionEndDate: new Date(Date.now() + DEFAULT_SITE_SETTINGS.commission.escrowProtectionDays * 86400000).toISOString().split('T')[0],
@@ -6276,11 +6241,16 @@ app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
     }
     const enriched = enrichOrderWithServiceInfo(newOrd);
     recordOrder(enriched);
-    saveOrdersToDisk();
+    saveOrdersToDisk(); // CRASH SAFE POINT: Order recorded as 'payment_pending'
 
     if (!isInquiry) {
       try {
         fundOrderEscrowWithEvent({ orderId: id, orderTitle: title, amount: rawAmount, buyerId, sellerId, actor: `user:${buyerId}` });
+        
+        // Update order status to funded only AFTER ledger successfully records the escrow
+        enriched.status = 'funded_in_escrow';
+        saveOrdersToDisk();
+        
         syncUserBalances();
       } catch (fundingErr: any) {
         // Rollback memory and disk state if escrow funding fails (e.g. insufficient wallet balance)
@@ -6288,14 +6258,24 @@ app.post('/api/orders', requireAuth, rateLimit(30, 60_000), (req, res) => {
         if (orderIdx !== -1) orders.splice(orderIdx, 1);
         orderIndex.delete(id);
 
-        for (let i = workstreamMessages.length - 1; i >= 0; i--) {
-          if (workstreamMessages[i].orderId === id) {
-            workstreamMessages.splice(i, 1);
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].orderId === id) {
+            messages.splice(i, 1);
           }
         }
 
         saveOrdersToDisk();
         saveMessagesToDisk();
+
+        // Cleanup orphaned workspace if this was the only order in it
+        const wsId = (enriched as any).workspaceId;
+        if (wsId) {
+          const otherOrdersInWs = orders.filter(o => o.workspaceId === wsId);
+          if (otherOrdersInWs.length === 0) {
+            workspaceService.deleteWorkspace(wsId);
+          }
+        }
+
         return res.status(400).json({ error: fundingErr.message || 'Failed to fund escrow. Order creation rolled back.' });
       }
     }
@@ -6591,7 +6571,18 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
     const caller = offerCaller(req);
     if (!caller || caller.status !== 'active') return res.status(403).json({ error: 'Account is not active' });
     if (!canAccessOrderWorkstream(caller, order)) return res.status(403).json({ error: 'Forbidden' });
-    if (offer.status !== 'pending') return res.status(409).json({ error: `This ${OFFER_LABEL[offer.kind]} is already ${offer.status}.` });
+    if (offer.status !== 'pending') {
+      if (offer.status === 'accepted' || offer.status === 'paid') {
+        const associatedOrder = offer.orderId ? orders.find(o => o.id === offer.orderId) : order;
+        if (associatedOrder) {
+          return res.json({ 
+            offer: viewOffer(offer), 
+            order: enrichOrderWithServiceInfo(associatedOrder) 
+          });
+        }
+      }
+      return res.status(409).json({ error: `This ${OFFER_LABEL[offer.kind]} is already ${offer.status}.` });
+    }
 
     const action = req.params.action;
     const now = new Date().toISOString();
@@ -6757,7 +6748,7 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
         buyerId: order.buyerId,
         sellerId: order.sellerId,
         amount: offer.amount,
-        status: 'funded_in_escrow',
+        status: 'payment_pending',
         createdAt: today,
         dueDate: offer.kind === 'proposal' && offer.deliveryDays
           ? new Date(Date.now() + offer.deliveryDays * 86400000).toISOString().split('T')[0]
@@ -6772,7 +6763,7 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
       // 1. Record & save order FIRST so it exists in memory / index for system event attachment
       const enrichedOrder = enrichOrderWithServiceInfo(newOrder);
       recordOrder(enrichedOrder);
-      saveOrdersToDisk();
+      saveOrdersToDisk(); // CRASH SAFE POINT: Order recorded as 'payment_pending'
       emitSystemEvent(newOrder.id, 'order_created', `Order placed: ${newOrder.title}. Payment is held in escrow until the work is approved.`);
 
       // 2. Fund escrow with rollback on failure
@@ -6785,6 +6776,11 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
           sellerId: newOrder.sellerId,
           actor: `user:${newOrder.buyerId}`
         });
+        
+        // Update order status to funded only AFTER ledger successfully records the escrow
+        enrichedOrder.status = 'funded_in_escrow';
+        saveOrdersToDisk();
+        
         syncUserBalances();
       } catch (fundingErr: any) {
         // Rollback newOrder state if funding fails
@@ -6792,9 +6788,9 @@ app.post('/api/offers/:id/:action(accept|decline|cancel)', requireAuth, rateLimi
         if (orderIdx !== -1) orders.splice(orderIdx, 1);
         orderIndex.delete(newOrder.id);
 
-        for (let i = workstreamMessages.length - 1; i >= 0; i--) {
-          if (workstreamMessages[i].orderId === newOrder.id) {
-            workstreamMessages.splice(i, 1);
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].orderId === newOrder.id) {
+            messages.splice(i, 1);
           }
         }
 

@@ -557,5 +557,15 @@
     "timestamp": "2026-10-19T17:38:18.077Z",
     "type": "message",
     "metadata": {}
+  },
+  {
+    "id": "msg_1792432709646_ktwq",
+    "orderId": "ord_101",
+    "senderId": "user_1",
+    "senderName": "Alex Rivera",
+    "text": "spoofed message",
+    "timestamp": "2026-10-19T17:58:29.646Z",
+    "type": "message",
+    "metadata": {}
   }
 ]

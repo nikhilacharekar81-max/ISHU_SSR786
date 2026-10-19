@@ -127,11 +127,13 @@ export interface Proposal {
 
 export interface Order {
   id: string;
+  workspaceId?: string;
+  orderType?: 'gig' | 'project';
   title: string;
   buyerId: string;
   sellerId: string;
   amount: number;
-  status: 'funded_in_escrow' | 'in_progress' | 'delivered' | 'completed' | 'disputed' | 'revision' | 'cancelled' | 'draft_review' | 'work_in_progress';
+  status: 'payment_pending' | 'funded_in_escrow' | 'in_progress' | 'delivered' | 'completed' | 'disputed' | 'revision' | 'cancelled' | 'draft_review' | 'work_in_progress';
   createdAt: string;
   dueDate: string;
   completedAt?: string;

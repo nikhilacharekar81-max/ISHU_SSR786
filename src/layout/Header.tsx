@@ -157,7 +157,6 @@ export function Header({
                             <a
                               href={`/categories/${cat.slug}`}
                               onClick={(e) => { 
-                                if (headerCategoriesTimeoutRef.current) clearTimeout(headerCategoriesTimeoutRef.current);
                                 setIsHeaderCategoriesDropdownOpen(false); 
                                 navigate(`/categories/${cat.slug}`, e); 
                               }}
