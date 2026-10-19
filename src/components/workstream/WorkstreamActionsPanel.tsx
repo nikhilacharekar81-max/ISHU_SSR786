@@ -63,7 +63,7 @@ export const WorkstreamActionsPanel: React.FC<WorkstreamActionsPanelProps> = ({
           >
             <div className="flex items-center gap-2.5">
               <Video className="w-4 h-4 text-emerald-400 animate-pulse" />
-              <span>Open Local Camera Preview</span>
+              <span>Start Video Call</span>
             </div>
             <ArrowRight className="w-3.5 h-3.5" />
           </button>

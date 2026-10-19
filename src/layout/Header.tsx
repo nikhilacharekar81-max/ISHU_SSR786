@@ -42,19 +42,6 @@ export function Header({
   const [isWorkstreamsDropdownOpen, setIsWorkstreamsDropdownOpen] = useState(false);
   const [isHeaderSearchDropdownOpen, setIsHeaderSearchDropdownOpen] = useState(false);
   const [isHeaderCategoriesDropdownOpen, setIsHeaderCategoriesDropdownOpen] = useState(false);
-  const headerCategoriesTimeoutRef = useRef<any>(null);
-
-  const handleHeaderCategoriesMouseEnter = () => {
-    if (headerCategoriesTimeoutRef.current) clearTimeout(headerCategoriesTimeoutRef.current);
-    setIsHeaderCategoriesDropdownOpen(true);
-  };
-
-  const handleHeaderCategoriesMouseLeave = () => {
-    if (headerCategoriesTimeoutRef.current) clearTimeout(headerCategoriesTimeoutRef.current);
-    headerCategoriesTimeoutRef.current = setTimeout(() => {
-      setIsHeaderCategoriesDropdownOpen(false);
-    }, 250);
-  };
 
   const toggleAvailableNow = () => {
     if (!currentUser) return;
@@ -102,17 +89,12 @@ export function Header({
         </div>
 
         <nav className="hidden lg:flex items-center gap-7 text-[13.5px] font-medium text-fiverr-dark">
-          {/* CATEGORIES AUTO DROPDOWN LINK */}
-          <div 
-            className="relative"
-            onMouseEnter={handleHeaderCategoriesMouseEnter}
-            onMouseLeave={handleHeaderCategoriesMouseLeave}
-          >
+          {/* CATEGORIES DROPDOWN LINK */}
+          <div className="relative">
             <button 
               type="button"
               onClick={(e) => {
                 e.preventDefault();
-                if (headerCategoriesTimeoutRef.current) clearTimeout(headerCategoriesTimeoutRef.current);
                 setIsHeaderCategoriesDropdownOpen(!isHeaderCategoriesDropdownOpen);
               }}
               className={`transition-colors hover:text-emerald-700 py-1 inline-flex items-center gap-1 cursor-pointer font-medium ${isCategoryRoute ? 'text-emerald-600 font-bold border-b-2 border-emerald-600' : 'text-fiverr-dark'}`}
@@ -124,8 +106,6 @@ export function Header({
             {isHeaderCategoriesDropdownOpen && (
               <div 
                 className="absolute left-0 top-full -mt-0.5 pt-2 w-[720px] max-w-[calc(100vw-2rem)] z-[120] animate-in fade-in duration-150"
-                onMouseEnter={handleHeaderCategoriesMouseEnter}
-                onMouseLeave={handleHeaderCategoriesMouseLeave}
               >
                 <div className="bg-white rounded-2xl shadow-2xl border border-slate-200/90 p-5 text-sm">
                   <div className="px-2 pb-3 mb-4 border-b border-slate-100 flex items-center justify-between">
@@ -133,10 +113,9 @@ export function Header({
                       <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
                       Browse All Categories
                     </span>
-                    <a 
+                      <a 
                       href="/gigs" 
                       onClick={(e) => { 
-                        if (headerCategoriesTimeoutRef.current) clearTimeout(headerCategoriesTimeoutRef.current);
                         setIsHeaderCategoriesDropdownOpen(false); 
                         navigate('/gigs', e); 
                       }}
@@ -152,7 +131,6 @@ export function Header({
                         <a 
                           href={`/categories/${cat.slug}`}
                           onClick={(e) => { 
-                            if (headerCategoriesTimeoutRef.current) clearTimeout(headerCategoriesTimeoutRef.current);
                             setIsHeaderCategoriesDropdownOpen(false); 
                             navigate(`/categories/${cat.slug}`, e); 
                           }}
@@ -167,7 +145,6 @@ export function Header({
                               key={sub.slug}
                               href={`/categories/${sub.slug}`}
                               onClick={(e) => { 
-                                if (headerCategoriesTimeoutRef.current) clearTimeout(headerCategoriesTimeoutRef.current);
                                 setIsHeaderCategoriesDropdownOpen(false); 
                                 navigate(`/categories/${sub.slug}`, e); 
                               }}

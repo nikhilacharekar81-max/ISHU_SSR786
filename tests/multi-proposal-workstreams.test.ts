@@ -167,7 +167,7 @@ async function main() {
     //    - Leave Freelancer A ($500 USD) pending
     console.log('3. Buyer accepts B ($450), C ($600), E ($550), declines D ($400), leaves A ($500) pending...');
 
-    const acceptB = await api('POST', `/api/proposals/${propB.id}/accept`, buyerToken);
+  const acceptB = await api('POST', `/api/proposals/${propB.id}/accept`, buyerToken);
     assert.strictEqual(acceptB.status, 200, `Accepting Proposal B failed: ${JSON.stringify(acceptB.data)}`);
 
     const acceptC = await api('POST', `/api/offers/${propC.offerId}/accept`, buyerToken);

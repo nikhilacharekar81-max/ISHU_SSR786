@@ -206,7 +206,7 @@ export const WorkstreamVideoCallModal: React.FC<WorkstreamVideoCallModalProps> =
             />
             <div className="overflow-hidden">
               <h5 className="text-xs font-bold truncate">{partner?.name || 'Project Collaborator'}</h5>
-              <p className="text-[10px] text-slate-400 truncate">Local Camera Preview</p>
+              <p className="text-[10px] text-slate-400 truncate"></p>
             </div>
           </div>
         </div>
@@ -251,7 +251,7 @@ export const WorkstreamVideoCallModal: React.FC<WorkstreamVideoCallModalProps> =
                 <h3 className="text-base font-bold text-white tracking-tight">WorkPerHour Meeting Room</h3>
                 <span className="px-2.5 py-0.5 bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold rounded-full flex items-center gap-1">
                   <Lock className="w-3 h-3 text-emerald-400" />
-                  <span>Local Camera Preview</span>
+                  <span></span>
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
@@ -387,7 +387,7 @@ export const WorkstreamVideoCallModal: React.FC<WorkstreamVideoCallModalProps> =
                       <h4 className="text-sm font-bold text-white">{partner?.name || 'Project Collaborator'}</h4>
                       <p className="text-[11px] text-emerald-400 font-medium flex items-center justify-center gap-1 mt-0.5">
                         <Radio className="w-3 h-3 animate-pulse text-emerald-400" />
-                        <span>Connected • Local Camera Preview</span>
+                        <span>Connected</span>
                       </p>
                     </div>
                   </div>

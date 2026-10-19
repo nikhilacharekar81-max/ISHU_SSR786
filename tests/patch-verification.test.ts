@@ -523,12 +523,12 @@ async function runTests() {
     token: buyerToken
   });
   assert.strictEqual(acceptFollowOnRes.status, 200, 'Buyer accepts follow-on Proposal');
-  assert.strictEqual(acceptFollowOnRes.json.order.id, pphOrder.id, 'Follow-on Proposal stays in the same WorkStream');
+  assert.notStrictEqual(acceptFollowOnRes.json.order.id, pphOrder.id, 'Follow-on Proposal creates a new Order');
   assert.strictEqual(acceptFollowOnRes.json.order.status, 'funded_in_escrow');
-  assert.strictEqual(acceptFollowOnRes.json.order.escrowRemaining, 250, 'New $250 escrow is held in the WorkStream');
+  assert.strictEqual(acceptFollowOnRes.json.order.amount, 250, 'New $250 escrow is held in the new Order');
 
   // Step 11h: Seller raises 2nd Invoice for Phase 2 and Buyer pays it -> Seller wallet credited again!
-  const secondInvRes = await api(`/api/orders/${pphOrder.id}/offers`, {
+  const secondInvRes = await api(`/api/orders/${acceptFollowOnRes.json.order.id}/offers`, {
     method: 'POST',
     token: sellerBToken,
     body: {
